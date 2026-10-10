@@ -749,6 +749,27 @@ class VegaEngine(nn.Module):
         grad = kappa * z + (g[..., None] * diff / (sigma ** 2)[..., None]).sum(1)
         return U, grad
 
+    def well_potential(self, z, c, log_a, sigma, opt_mask):
+        """U(z), its gradient, and the well exponent q_k = |z - c_k|^2 / (2 sigma_k^2), from one pass.
+
+        The integrator needs U and grad; the answer readout needs E_k = q_k - log a_k. Both start from
+        the same [B, K, D] difference, and the step loop used to build it twice -- once for the gradient
+        and once in well_energy -- so the wells are evaluated once and q is handed back for free.
+        """
+        kappa = self.log_kappa.exp()
+        diff = z[:, None, :] - c                                   # [B, K, D]
+        d2 = (diff ** 2).sum(-1)
+        q = d2 / (2 * sigma ** 2)                                   # exponent of the well, [B, K]
+        g = torch.exp(log_a - q) * opt_mask.float()                 # a_k * gaussian, [B, K]
+        U = 0.5 * kappa * (z ** 2).sum(-1) - g.sum(-1)
+        grad = kappa * z + (g[..., None] * diff / (sigma ** 2)[..., None]).sum(1)
+        return U, grad, q
+
+    @staticmethod
+    def well_energy_at(q, log_a, opt_mask):
+        """Readout energy from a well exponent already computed by well_potential."""
+        return (q - log_a).masked_fill(~opt_mask, 1e4)
+
     def forward(self, feats, opts, opt_mask, qtype, n_steps: Optional[int] = None, halt: bool = False,
                 return_traj: bool = True, prestandardized: bool = False, chunks=None, chunk_mask=None):
         slots, o = self._mix(feats, opts, prestandardized)
@@ -773,18 +794,19 @@ class VegaEngine(nn.Module):
         settled = torch.zeros(B, dtype=torch.bool, device=z.device)
         steps_used = torch.full((B,), T, dtype=torch.long, device=z.device)
         E0, _ = self.well_energy(z, c, log_a, sigma, opt_mask)
-        U, grad = self.potential_and_grad(z, c, log_a, sigma, opt_mask)
+        U, grad, q = self.well_potential(z, c, log_a, sigma, opt_mask)
+        gn = grad.norm(dim=-1)
         logits_traj, H_traj = [-E0], [0.5 * (p ** 2).sum(-1) + U]
         A = self.A_log.exp()
         for t in range(T):
-            x = torch.cat([z, p, grad, grad.norm(dim=-1, keepdim=True)], -1)
+            x = torch.cat([z, p, grad, gn[:, None]], -1)
             u = self.ssm_in(x)
             bu, dt_raw, fr_raw = u[:, :-2], u[:, -2:-1], u[:, -1:]
             dt = self.dt_max * torch.sigmoid(dt_raw)                 # selective step (Mamba's Delta)
             gamma = F.softplus(fr_raw)                                # friction
             h = torch.exp(-A * dt) * h + dt * bu                      # diagonal SSM memory of the trajectory
             force = self.force_scale * torch.tanh(self.ssm_out(h))
-            g_eff = grad / (1 + grad.norm(dim=-1, keepdim=True) / self.force_max)   # soft cap: no slingshots
+            g_eff = grad / (1 + gn[:, None] / self.force_max)         # soft cap: no slingshots
             p_new = p * torch.exp(-gamma * dt) - dt * g_eff + dt * force   # symplectic Euler, damped
             z_new = z + dt * p_new
             if halt:  # settled particles stay where they are (early exit per item)
@@ -792,17 +814,19 @@ class VegaEngine(nn.Module):
                 p_new = torch.where(keep, p, p_new)
                 z_new = torch.where(keep, z, z_new)
             z, p = z_new, p_new
-            U, grad = self.potential_and_grad(z, c, log_a, sigma, opt_mask)
+            U, grad, q = self.well_potential(z, c, log_a, sigma, opt_mask)
+            gn = grad.norm(dim=-1)
             if return_traj or t == T - 1:
-                E, _ = self.well_energy(z, c, log_a, sigma, opt_mask)
-                logits_traj.append(-E)
+                logits_traj.append(-self.well_energy_at(q, log_a, opt_mask))
                 H_traj.append(0.5 * (p ** 2).sum(-1) + U)
             kin = 0.5 * (p ** 2).sum(-1)
-            now = (kin < self.settle_eps) & (grad.norm(dim=-1) < 10 * self.settle_eps) & ~settled
+            now = (kin < self.settle_eps) & (gn < 10 * self.settle_eps) & ~settled
             steps_used = torch.where(now, torch.full_like(steps_used, t + 1), steps_used)
             settled = settled | now
-            if halt and bool(settled.all()):
-                break
+            # Deliberately no `break` on settled.all(): that test is a GPU->host sync on every step.
+            # A settled particle is already frozen by the where() above, so a longer horizon returns the
+            # same numbers; the loop just runs to T without touching the host. Numbers in
+            # bench/bench_fastpath.py, invariance in tests/test_engine_fastpath.py.
         _, d2 = self.well_energy(z, c, log_a, sigma, opt_mask)
         nearest = (d2 / (2 * sigma ** 2)).masked_fill(~opt_mask, 1e4).min(-1).values   # how far from any well bottom
         return {"logits": logits_traj[-1], "logits_traj": logits_traj, "H_traj": H_traj, "z0": z0, "zT": z,
