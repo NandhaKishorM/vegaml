@@ -346,7 +346,10 @@ def stage_train(args):
     base_sha = eng.base_sha256()
 
     j = attach_adapter(engine, rank=args.rank, alpha=float(args.rank))
-    engine.adapter_mode = "on"
+    # "auto", not "on": `_set_gates` makes "on" return ones and never call the gate networks, so the
+    # negative batches below would train nothing and the saved gate would stay at its random init.
+    # Training through the gate is what makes the "when should this fire" question real.
+    engine.adapter_mode = "auto"
     for p in engine.parameters():
         p.requires_grad_(False)
     for path_ in ("world.net.1", "probe.net.1", "impulse.net.1", "to_z0.net.1", "to_p0.net.1",
@@ -500,6 +503,20 @@ def stage_eval(args):
                 100 * ece_score(probs.max(1), (pred == y).astype(float)),
                 float(np.concatenate(G).mean()) if G else None)
 
+    def gate_on_negatives(engine, j):
+        """Mean gate on the ag_news negatives: the routing question the positives cannot answer."""
+        neg = load_split("neg")
+        gs = []
+        with torch.no_grad():
+            for s in range(0, len(neg[3]), args.batch):
+                f = neg[0][s:s + args.batch].to(device)
+                o = neg[1][s:s + args.batch].to(device)
+                m = neg[2][s:s + args.batch].to(device)
+                qt = torch.full((len(f),), QTYPES["choice"], device=device)
+                out = engine(f, o, m, qt, halt=False, return_traj=False)
+                gs.append(out["gates"][:, j].cpu().numpy())
+        return float(np.concatenate(gs).mean())
+
     base = Engine(path, backbone=BACKBONE, device=device, adapters="off")
     acc_b, ece_b, _ = run(base.engine, base.theta)
     log("base engine      acc %.4f   ECE %.2f" % (acc_b, ece_b))
@@ -508,16 +525,28 @@ def stage_eval(args):
     meta = json.load(open(os.path.join(OUT, "webchain.json")))
     j = load_adapter(tuned.engine, load_file(os.path.join(OUT, "webchain.safetensors")),
                      meta["rank"], meta["alpha"])
-    tuned.engine.adapter_mode = "on"
     tuned.engine.eval()
+    # Two different questions, so two numbers: "on" is the ceiling with every adapter at full strength,
+    # "auto" is what a caller gets, with the learned gate deciding per question. Reporting only "on"
+    # hides whether the gate works.
+    tuned.engine.adapter_mode = "on"
     acc_a, ece_a, gate = run(tuned.engine, meta["calibration"]["theta"], j=j)
-    log("+ webchain adapter acc %.4f   ECE %.2f   mean gate %.3f" % (acc_a, ece_a, gate))
+    log("+ webchain adapter acc %.4f   ECE %.2f   mean gate %.3f   (mode=on)" % (acc_a, ece_a, gate))
+    tuned.engine.adapter_mode = "auto"
+    acc_r, ece_r, gate_r = run(tuned.engine, meta["calibration"]["theta"], j=j)
+    gate_neg = gate_on_negatives(tuned.engine, j)
+    log("+ webchain adapter acc %.4f   ECE %.2f   mean gate %.3f   (mode=auto, routed)"
+        % (acc_r, ece_r, gate_r))
+    log("gate on this task %.3f, on the ag_news negatives %.3f" % (gate_r, gate_neg))
     log("delta: accuracy %+.4f, ECE %+.2f" % (acc_a - acc_b, ece_a - ece_b))
 
     with open(os.path.join(WORK, "webchain_results.json"), "w") as fh:
         json.dump({"n_test": int(len(y)),
                    "base": {"accuracy": acc_b, "ece": ece_b},
-                   "adapter": {"accuracy": acc_a, "ece": ece_a, "mean_gate": gate}}, fh, indent=1)
+                   "adapter": {"accuracy": acc_a, "ece": ece_a, "mean_gate": gate, "mode": "on"},
+                   "adapter_routed": {"accuracy": acc_r, "ece": ece_r, "mean_gate": gate_r,
+                                      "mode": "auto"},
+                   "gate_on_negatives": gate_neg}, fh, indent=1)
     log("wrote %s/webchain_results.json" % WORK)
 
 
