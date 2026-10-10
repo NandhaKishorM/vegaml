@@ -1,11 +1,13 @@
 """Train a browser element-choice adapter from WebChain click trajectories.
 
-Run extract / train / eval as in vega_finetune.py; --data selects the local JSONL.
-extract --stats-only converts rows without a model, and extract --limit 8 --smoke
-builds real tokenizer prompts without loading backbone weights or caching features.
-Test websites follow the parent exporter; validation holds out training-side tasks.
-WebChain has no unrelated labeled questions, so gate negatives reuse real AG News.
-VEGA_WORK defaults to /kaggle/working; browser caches are isolated from emotion caches.
+Run extract / train / eval as in vega_finetune.py. --data defaults to the published
+cklxx/webchain-elements (CC-BY-4.0) and also accepts a local JSONL of the same
+records; a local file gets the exporter's website holdout, the published one
+already carries it. extract --stats-only converts rows without a model, and
+extract --limit 8 --smoke builds real tokenizer prompts without loading backbone
+weights or caching features. WebChain has no unrelated labeled questions, so gate
+negatives reuse real AG News. VEGA_WORK defaults to /kaggle/working; browser
+caches are isolated from emotion caches.
 """
 from __future__ import annotations
 
@@ -41,7 +43,46 @@ WORK = os.environ.get("VEGA_WORK", "/kaggle/working")
 CACHE = os.path.join(WORK, "features-webchain-" + SIZE)
 OUT = os.path.join(WORK, "adapter-webchain-" + SIZE)
 
-DATA = "/home/ckl/projects/S/laya/finetune/out/webchain_cases.jsonl"
+DATA = os.environ.get("VEGA_DATA") or "cklxx/webchain-elements"
+
+
+def read_jsonl(path, limit=None):
+    rows = []
+    with open(path) as fh:
+        for i, line in enumerate(fh):
+            if limit is not None and i >= limit:
+                break
+            rows.append(json.loads(line))
+    return rows
+
+
+def read_source(source, limit=None):
+    """The published dataset ships its two splits as two files; a single local JSONL has neither, so
+    the website rule the exporter uses is applied to it here. Returns [(rows, kind)]."""
+    if os.path.isfile(source):
+        return [(read_jsonl(source, limit), "local")]
+    from huggingface_hub import hf_hub_download
+    out = []
+    for name, kind in (("data/train.jsonl", "train"), ("data/test.jsonl", "test")):
+        local = hf_hub_download(source, name, repo_type="dataset", token=HF_TOKEN)
+        out.append((read_jsonl(local, limit), kind))
+    return out
+
+
+def as_record(row):
+    """Both shapes arrive here: the raw recorded trajectory and the published flat record, whose page
+    is spread over url / title / page_text and whose candidates sit under their own key."""
+    if "page_obj" in row:
+        raw = row["page_obj"]
+        page = {"url": raw["url"], "title": raw["title"], "text": raw["text"]}
+        candidates, label = raw["actions"], row.get("label", "")
+    else:
+        page = {"url": row["url"], "title": row["title"], "text": row["page_text"]}
+        candidates, label = row["candidates"], row.get("gold_label", "")
+    return {"page": page, "candidates": candidates, "goal": row["goal"], "gold_id": row["gold_id"],
+            "website": row.get("website") or "", "label": label,
+            # The raw records carry no task id; their start url identifies the task just as well.
+            "task": row.get("task_id") or row.get("url") or ""}
 
 
 def element_text(action):
@@ -58,35 +99,34 @@ def element_text(action):
     return text
 
 
-def convert_rows(path, limit=None):
+def convert_rows(source, limit=None):
     from vegaml._common import serialize_state
 
     splits = {"train": [], "valid": [], "test": []}
     counts, total = [], 0
-    with open(path) as fh:
-        for index, line in enumerate(fh):
-            if limit is not None and index >= limit:
-                break
-            row = json.loads(line)
+    for rows, kind in read_source(source, limit):
+        for raw in rows:
             total += 1
             # Local trajectories use CLICK while the documented schema uses click.
-            if row["gold_op"].lower() != "click":
+            if raw["gold_op"].lower() != "click":
                 continue
-            page = row["page_obj"]
-            criteria = {a["id"]: element_text(a) for a in page["actions"]}
-            if len(criteria) != len(page["actions"]) or row["gold_id"] not in criteria:
-                raise ValueError("row %d: duplicate candidate ids or missing gold id" % index)
+            record = as_record(raw)
+            page, candidates = record["page"], record["candidates"]
+            criteria = {a["id"]: element_text(a) for a in candidates}
+            if len(criteria) != len(candidates) or record["gold_id"] not in criteria:
+                raise ValueError("row %d: duplicate candidate ids or missing gold id" % total)
             question = {"type": "choice", "instructions": "Goal: %s  Which element should be clicked next?"
-                        % row["goal"], "criteria": criteria}
-            state = serialize_state({"page": {k: page[k] for k in ("url", "title", "text")},
-                                     "recent_actions": row.get("history") or []})
-            held = hashlib.md5(row["website"].encode()).digest()[0] % 5 == 0
+                        % record["goal"], "criteria": criteria}
+            state = serialize_state({"page": page, "recent_actions": raw.get("history") or []})
+            # The published test file already holds out whole websites. A single local file carries no
+            # split, so the parent exporter's rule is applied to it here.
+            held = kind == "local" and hashlib.md5(record["website"].encode()).digest()[0] % 5 == 0
             # Hold out whole tasks for calibration so adjacent trajectory steps cannot leak into training.
-            valid = hashlib.md5(row["task_id"].encode()).digest()[0] % 10 == 0
-            split = "test" if held else "valid" if valid else "train"
+            valid = kind != "test" and hashlib.md5(record["task"].encode()).digest()[0] % 10 == 0
+            split = "test" if (held or kind == "test") else "valid" if valid else "train"
             splits[split].append({"state": state, "question": question,
-                                  "y": list(criteria).index(row["gold_id"]), "gold_id": row["gold_id"],
-                                  "row": index})
+                                  "y": list(criteria).index(record["gold_id"]),
+                                  "gold_id": record["gold_id"], "row": total})
             counts.append(len(criteria))
     log("rows %d; clicks %d; non-clicks %d" % (total, len(counts), total - len(counts)))
     log("website split: train %d, test %d" %
