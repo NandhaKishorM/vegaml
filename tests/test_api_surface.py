@@ -179,6 +179,8 @@ def test_load_defaults_to_the_small_model(monkeypatch):
 
 
 def test_the_4b_reads_from_its_own_folder(monkeypatch):
+    import os
+
     from vegaml import hub
 
     seen = {}
@@ -193,7 +195,9 @@ def test_the_4b_reads_from_its_own_folder(monkeypatch):
 
     out = hub.fetch("4b")
     assert seen["repo_id"] == hub.DEFAULT_REPO, "both sizes live in one repository"
-    assert out.endswith("/4b")
+    # os.path.join, not "/": the separator is the platform's, so a test that hardcodes "/" is a test
+    # that can only pass on POSIX. This one failed on every Windows checkout.
+    assert out == os.path.join("/tmp/snapshot", "4b")
     assert all(p.startswith("4b/") for p in seen["allow_patterns"]
                if p != hub.COUNTER_FILE), "only the counter file sits outside the folder"
 
@@ -219,3 +223,23 @@ def test_modes_are_the_documented_four():
 def test_public_names_are_exported():
     for name in ("load", "Vega", "TTTHead", "fetch", "__version__"):
         assert hasattr(vegaml, name)
+    # label_ids and MODES are imported by name from outside the package, so `from vegaml import *`
+    # has to carry them too.
+    for name in ("label_ids", "MODES"):
+        assert name in vegaml.__all__, "%s is part of the surface but is not exported" % name
+
+
+def test_every_name_in_all_actually_exists():
+    """__all__ listing a name that is not defined turns `from vegaml import *` into an ImportError
+    in the user's code, not in ours."""
+    for name in vegaml.__all__:
+        assert hasattr(vegaml, name), "__all__ lists %r, which the package does not define" % name
+
+
+def test_a_star_import_supplies_the_names_other_modules_rely_on():
+    """The actual failure mode: `from vegaml import *` followed by using label_ids."""
+    namespace = {}
+    exec("from vegaml import *", namespace)      # noqa: S102 - exercising the public API is the point
+    for name in ("load", "Vega", "TTTHead", "fetch", "label_ids", "MODES"):
+        assert name in namespace, "%r is missing from a star import" % name
+    assert namespace["label_ids"]({"type": "boolean", "criteria": {}}) == ["false", "true"]

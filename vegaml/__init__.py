@@ -35,7 +35,9 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 from .hub import default_token, fetch
 from .ttt import TTTHead
 
-__all__ = ["load", "Vega", "TTTHead", "fetch", "default_token", "__version__"]
+# MODES and label_ids are imported by name from outside this package (the bench adapter, the tests),
+# so they belong in __all__ rather than merely being present as module attributes.
+__all__ = ["load", "Vega", "TTTHead", "fetch", "default_token", "label_ids", "MODES", "__version__"]
 __version__ = "0.7.0"
 
 MODES = ("auto", "engine", "ttt", "both")

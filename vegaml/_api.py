@@ -78,7 +78,10 @@ class Vega:
         self.risk = cal.get("default_risk", "0.1")
         self.unbound = cal.get("unbound_threshold", float("inf"))
         if not cal:
-            print("vega: no calibration block in vega_config.json (run evaluate.py); probabilities are raw")
+            print("vega: no calibration block in vega_config.json, so probabilities are raw and "
+                  "prediction_set is None. Refitting the temperature needs the evaluation script "
+                  "that shipped with the training run; this package reads calibration, it does not "
+                  "produce it.")
         self.adapters = []
         self._sha = None
         assert adapters in ("auto", "on", "off"), adapters
