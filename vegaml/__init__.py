@@ -135,6 +135,21 @@ class Vega:
                                "reason": "needs at least %d labelled examples" % min_examples}
                 continue
             labels_for_q = label_ids(q)
+            # A label outside the question's own option set cannot be predicted by a head spanning
+            # that set. Report it here, where there is a report to put it in, rather than raising a
+            # bare KeyError from inside the fit.
+            bad = sorted({str(v) for v in y if str(v) not in set(labels_for_q)})
+            if bad:
+                report[qid] = {"fitted": False, "examples": len(X),
+                               "reason": ("label(s) %s in the examples are not options of this question, "
+                                          "whose options are %s" % (", ".join(repr(b) for b in bad[:5]),
+                                                                     labels_for_q))}
+                continue
+            if len(set(y)) < 2:
+                report[qid] = {"fitted": False, "examples": len(X),
+                               "reason": ("every example carries the same label (%r); there is nothing to "
+                                          "distinguish" % y[0])}
+                continue
             head = TTTHead(labels_for_q).fit(X, y)
             cv = head.cross_val_accuracy(X, y, folds=folds)
             chance = 1.0 / max(len(labels_for_q), 2)
@@ -224,10 +239,35 @@ class Vega:
                     continue
                 raise RuntimeError("no TTT head for %r" % qid)
             head, cv = hv
-            probs = head.predict(self.features(state, q), allowed=label_ids(q))
+            allowed = label_ids(q)
+            # A head is fitted per question, spanning that question's own options. Asking it a
+            # question with a different option set used to fail deep inside predict() with
+            # "max() arg is an empty sequence", naming neither the head nor the question.
+            if not set(allowed) & set(head.labels):
+                raise RuntimeError(
+                    "the TTT head for %r was fitted on %s, but this question offers %s. Refit with "
+                    "fit(examples, questions) for the question as it is now written."
+                    % (qid, head.labels, allowed))
+            probs = head.predict(self.features(state, q), allowed=allowed)
             best = max(probs, key=probs.get)
-            answers[qid] = {"probs": probs, "choice": best, "confidence": probs[best],
-                            "cv_accuracy": cv}
+            answer = {"probs": probs, "confidence": probs[best], "cv_accuracy": cv,
+                      "readout": "ttt"}
+            # The engine keys each answer type differently, and mode="auto" is documented as
+            # reproducing the engine's answer shape. A head answer was always keyed "choice", so a
+            # boolean question answered by a head lost its "boolean" field and switching readout
+            # changed the caller's code.
+            t = q["type"]
+            if t == "boolean":
+                answer["boolean"] = probs["true"]
+                answer["choice"] = "true" if best == "true" else "false"
+            elif t == "score":
+                level = int(best)
+                answer["score"] = level
+                answer["expected_score"] = float(sum(int(k) * v for k, v in probs.items()))
+                answer["choice"] = level
+            else:
+                answer["choice"] = best
+            answers[qid] = answer
         return answers
 
     # ------------------------------------------------------------------ images
