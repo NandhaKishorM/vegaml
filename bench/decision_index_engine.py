@@ -3,7 +3,8 @@
 The kit is https://github.com/apolinario/decision-index, which rebuilds the public part of the
 Decision Index suite and drives any engine through it:
 
-    pip install -e "decision-index[transformers]" vegaml
+    pip install "decision-index[transformers,rebuild] @ git+https://github.com/apolinario/decision-index"
+    pip install vegaml
     python -m decision_index pipeline \
         --engine bench.decision_index_engine:VegaEngine \
         --option model=0.8b --out runs/vega-08b
@@ -29,17 +30,20 @@ answer space with no head, or one whose cross-validated accuracy does not beat c
 by the engine instead, and every answer records which readout produced it.
 
 Two names for one thing: the kit calls the yes/no primitive ``noul``, which is what this answer
-type was called here before 0.5.0 renamed it to ``boolean``. The mapping lives in this file and
-nowhere else.
+type was called here before 0.5.0 renamed it to ``boolean``. The mapping lives in this file only, in
+the three places that cross the boundary: ``to_vega`` on the way in, ``to_kit_answers`` on the way
+out, and ``_ttt_answer`` for booleans a fitted head answers.
 """
 from __future__ import annotations
 
 import gzip
 import hashlib
 import json
+import time
 
 from decision_index.engines import Engine, Unsupported
 
+from vegaml import label_ids
 from vegaml._common import QUERY_FIRST, TEMPLATES, answer_space_hash, option_texts, serialize_state
 
 # build_prompt's own defaults for the two budgets the checkpoint config does not carry. _view does
@@ -65,11 +69,20 @@ def to_vega(key: str, question: dict) -> dict:
 
 
 def internal(question: dict) -> dict:
-    """The shape vegaml's prompt builder reads, without going through a private helper."""
+    """The shape vegaml's prompt builder reads, without going through a private helper.
+
+    A choice question may carry its options as a list rather than a mapping. The package's own
+    loader normalises that (a bare option name has no description), and this adapter must match it:
+    without this, a list-shaped choice question raises inside the prompt builder's `crit.items()`
+    instead of working, so the adapter is narrower than the API it wraps.
+    """
     ins = question["instructions"]
+    crit = question.get("criteria")
+    if question["type"] == "choice" and isinstance(crit, list):
+        crit = {c: None for c in crit}
     return {"t": question["type"],
             "ins": ins if isinstance(ins, str) else json.dumps(ins),
-            "crit": question.get("criteria")}
+            "crit": crit}
 
 
 def to_kit_answers(questions: dict, answers: dict) -> dict:
@@ -120,9 +133,16 @@ def file_sha256(path: str) -> str:
 
 
 def label_text(question: dict, gold) -> str:
-    """One gold answer as the label string the head is fitted on."""
+    """One gold answer as the label string the head is fitted on.
+
+    A boolean gold arrives from the kit as a number or as the string "true"/"false". `bool("false")`
+    is True, so a plain truthiness test fitted every string-false example as a positive one --
+    inverting the class the head is being asked to predict. Parse the string forms explicitly.
+    """
     if question["type"] == "boolean":
-        return "true" if bool(gold) else "false"
+        if isinstance(gold, str):
+            return "true" if gold.strip().lower() in ("true", "1", "yes") else "false"
+        return "true" if float(gold) != 0.0 else "false"
     return str(gold)
 
 
@@ -158,7 +178,9 @@ class VegaEngine(Engine):
             "repo": self.repo,
             "model_dir": str(engine.model_dir),
             "backbone": self.cfg.get("backbone_name"),
-            "mode": "engine",
+            # The mode actually in force. This said "engine" unconditionally, so a mode=ttt run's
+            # environment.json contradicted the runtime() block reporting "ttt" for the same run.
+            "mode": self.mode,
             "views": self.views,
             "budgets": {"max_len": self.max_len, "opt_max_tokens": self.opt_max,
                         "ins_max_tokens": INS_MAX_TOKENS},
@@ -182,7 +204,7 @@ class VegaEngine(Engine):
     # ------------------------------------------------------------------ fitting
     def _fit_heads(self, path):
         """One head per answer space in the examples file. Fitted here, before anything is timed."""
-        from vegaml import TTTHead, label_ids
+        from vegaml import TTTHead
 
         grouped = {}
         for row in read_rows(path):
@@ -224,13 +246,11 @@ class VegaEngine(Engine):
             if not keep:
                 report[space]["reason"] = ("cross-validated accuracy is not above chance"
                                            if cv is not None else
-                                           "too few examples to cross-validate")
+                                           "too few examples per option to cross-validate")
         return report
 
     def _ttt_answer(self, question: dict, asked: dict, state) -> dict:
         """One answer from the fitted head for this answer space, in the kit's shape."""
-        from vegaml import label_ids
-
         head = self.heads[space_key(internal(asked))]
         probs = head.predict(self.vega.features(state, asked), allowed=label_ids(asked))
         if question["type"] == "noul":
@@ -291,8 +311,14 @@ class VegaEngine(Engine):
         # Which readout answers which question. A head only exists for an answer space that was
         # fitted and beat chance, so this is a per-space split, never a per-row one.
         by_head = [key for key in questions if space_key(shapes[key]) in self.heads]
-        by_engine = {key: asked[key] for key in questions if key not in by_head}
+        head_set = set(by_head)          # by_head is scanned once per question further down
+        by_engine = {key: asked[key] for key in questions if key not in head_set}
 
+        # A head still reads the frozen backbone: Vega.features() is one pooled forward pass over the
+        # same prompt. So the whole request is timed here and head questions are counted as tokens
+        # too. Before this, a request answered wholly by heads reported latency_ms: None, views: None
+        # and usage.input_tokens == 0, which is not a measurement of anything.
+        started = time.perf_counter()
         answers, result = {}, {}
         if by_engine:
             result = self.vega.decide(state, by_engine, mode="engine", alpha=self.alpha,
@@ -300,12 +326,18 @@ class VegaEngine(Engine):
             answers.update(to_kit_answers({k: questions[k] for k in by_engine}, result["answers"]))
         for key in by_head:
             answers[key] = self._ttt_answer(questions[key], asked[key], state)
+        elapsed_ms = round(1000 * (time.perf_counter() - started), 1)
+        n_tokens = int(result.get("n_tokens") or 0) if by_engine else 0
+        if by_head:
+            # Each head question is its own single-question read of the state, so the state is
+            # re-read once per head question rather than shared between them.
+            n_tokens += len(by_head) * (state_tokens + sum(fixed[k] for k in by_head) // len(by_head))
 
         response = {"model": "vega-" + self.repo, "answers": answers,
-                    "usage": {"input_tokens": int(result.get("n_tokens") or 0)}}
+                    "usage": {"input_tokens": n_tokens}}
         reported = ("confidence", "abstain", "unbound", "settle_steps", "energy", "adapter", "gate")
-        raw = {"latency_ms": result.get("latency_ms"), "views": result.get("views"),
-               "readout": {key: ("ttt" if key in by_head else "engine") for key in questions},
+        raw = {"latency_ms": elapsed_ms, "views": self.views,
+               "readout": {key: ("ttt" if key in head_set else "engine") for key in questions},
                "engine": {key: {f: answer[f] for f in reported if f in answer}
                           for key, answer in (result.get("answers") or {}).items()}}
         return response, raw

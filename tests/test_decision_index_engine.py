@@ -226,6 +226,66 @@ def test_gold_labels_become_the_strings_the_head_is_fitted_on(adapter):
     assert adapter.label_text({"type": "choice"}, "billing") == "billing"
 
 
+def test_a_string_false_gold_is_not_fitted_as_a_positive(adapter):
+    """`bool("false")` is True, so the truthiness test fitted every string-false example as a
+    positive one -- inverting the class the head is being asked to predict."""
+    assert adapter.label_text({"type": "boolean"}, "false") == "false"
+    assert adapter.label_text({"type": "boolean"}, "true") == "true"
+    assert adapter.label_text({"type": "boolean"}, "False") == "false"
+    assert adapter.label_text({"type": "boolean"}, 1.0) == "true"
+    assert adapter.label_text({"type": "boolean"}, 0.0) == "false"
+
+
+def test_a_choice_question_may_carry_its_options_as_a_list(adapter):
+    """The package's own loader normalises a list of bare option names into a mapping. The adapter
+    did not, so a valid kit question raised inside the prompt builder instead of working."""
+    listed = {"type": "choice", "instructions": "which?", "criteria": ["a", "b"]}
+    shape = adapter.internal(adapter.to_vega("q", listed))
+    assert shape["crit"] == {"a": None, "b": None}, "normalised the way the package does it"
+    from vegaml._common import option_texts
+    assert option_texts(shape) == ["a", "b"], "and the normalised shape is usable by the prompt builder"
+
+
+def test_a_request_answered_by_heads_still_reports_a_latency_and_token_count(adapter):
+    """A head still reads the frozen backbone, so it is timed and counted like any other answer.
+
+    Before this, a request with nothing left for the engine reported latency_ms: None, views: None
+    and usage.input_tokens == 0 -- not a measurement of anything.
+    """
+    space = adapter.space_key(adapter.internal(adapter.to_vega("q", CHOICE)))
+    eng = _ttt_engine(adapter, {space: _Head("b")})
+    response, raw = adapter.VegaEngine.__call__(eng, "some state", {"q": CHOICE})
+    assert raw["latency_ms"] is not None and raw["latency_ms"] >= 0
+    assert raw["views"] == 1
+    assert response["usage"]["input_tokens"] > 0, "the frozen read happened; it must be counted"
+
+
+def test_a_mixed_request_reports_a_token_count_covering_both_readouts(adapter):
+    """Head questions were never attributed, so a mixed request under-reported its own cost."""
+    wide = dict(CHOICE, criteria={"a": "first", "c": "third"})
+
+    def decide(state, asked, **kw):
+        return {"answers": {"other": {"probs": {"a": 0.1, "c": 0.9}, "choice": "c"}}, "n_tokens": 3}
+
+    space = adapter.space_key(adapter.internal(adapter.to_vega("q", CHOICE)))
+    eng = _ttt_engine(adapter, {space: _Head("b")}, decide=decide)
+    engine_only = _ttt_engine(adapter, {}, decide=decide)
+    mixed, _ = adapter.VegaEngine.__call__(eng, "s", {"q": CHOICE, "other": wide})
+    alone, _ = adapter.VegaEngine.__call__(engine_only, "s", {"other": wide})
+    assert mixed["usage"]["input_tokens"] > alone["usage"]["input_tokens"], \
+        "a head-answered question costs a frozen read and must be counted"
+
+
+def test_provenance_mode_matches_the_runtime_mode(adapter):
+    """Provenance hardcoded mode="engine", so a ttt run's environment.json contradicted the
+    runtime() block for the very same run."""
+    import inspect
+
+    src = inspect.getsource(adapter.VegaEngine.__init__)
+    assert '"mode": self.mode' in src, "provenance must record the mode actually in force"
+    assert '"mode": "engine"' not in src
+
+
 def test_each_example_is_fitted_on_its_own_question_not_the_spaces_first_one(adapter, tmp_path):
     """The bug this guards: BANKING77 carries its utterance in the instructions over an empty
     state, so fitting every example through one shared question gives identical features and a

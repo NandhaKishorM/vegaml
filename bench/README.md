@@ -47,9 +47,10 @@ python -m decision_index score --results runs/vega-sample/results.jsonl
 The kit's rules are deliberately strict, and three of them bite here:
 
 - **No truncation.** Vega's prompt builder quietly shortens a state that will not fit, an
-  instruction past 256 tokens and an option past 32. The adapter checks all three before deciding
-  and raises `Unsupported` instead, which the suite counts as wrong. A refusal is an honest zero;
-  a truncated prompt is a score for a question the model was never shown.
+  instruction past 256 tokens, and an option past whatever `opt_max_tokens` the checkpoint config
+  carries (32 for the published checkpoints). The adapter reads all three budgets and raises
+  `Unsupported` instead, which the suite counts as wrong. A refusal is an honest zero; a truncated
+  prompt is a score for a question the model was never shown.
 - **Every option gets a probability.** Vega already returns a full distribution, so this costs
   nothing. The probabilities are renormalised for float error only, never reordered.
 - **Unanswered is wrong, and so is abstaining.** Vega's `abstain` flag is reported in
@@ -57,7 +58,18 @@ The kit's rules are deliberately strict, and three of them bite here:
   nothing to withhold, and withholding it would score zero.
 
 The kit calls the yes/no primitive `noul`, the name this answer type carried here before 0.5.0
-renamed it to `boolean`. `to_vega` is the only place the two names meet.
+renamed it to `boolean`. The two names meet in three places, all in the adapter: `to_vega` going
+in, `to_kit_answers` coming out, and `_ttt_answer` for booleans a fitted head answers.
+
+## What a run reports
+
+`raw_output` carries `latency_ms`, `views`, and a per-question `readout`. A head still reads the
+frozen backbone — `Vega.features()` is one pooled forward pass over the same prompt — so its
+questions are timed and counted in `usage.input_tokens` like any other. A request answered wholly by
+heads therefore reports a real latency and a non-zero token count, not `None` and `0`.
+
+The provenance block's `mode` and `runtime()["mode"]` always agree, so a run's `environment.json`
+cannot claim one readout while its results claim another.
 
 One state is read once for every question in a request, so the state has to fit the tightest
 question in it. That is why the budget check runs over all of them before any decision is made.
