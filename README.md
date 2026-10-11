@@ -107,6 +107,13 @@ The backbone is multimodal and its vision encoder is frozen with the rest, so a 
 of the state text in the same prompt and the same spans are pooled. The benchmark figures below are
 text; the image path is functional but not covered by them.
 
+`image` may be a PIL image, a path, or an `HxWx3` numpy array. Answers come back in the same shape as
+`decide`, calibration and all: `prediction_set`, `abstain`, `unbound`, `settle_steps` and `energy` are
+present exactly as on the text path. `decide_image` always runs the engine and marks every answer
+`readout: "engine"`, because a TTT head reads text features and has nothing to say about pixels. To
+measure what the picture contributed, `decide_image_text` answers the same questions through the same
+path with the image withheld.
+
 ### 73,728-token context
 
 `max_len` is 73,728 tokens, and the architecture is built for it rather than merely permitting it:

@@ -116,10 +116,12 @@ class VegaVision:
         return feats, opts, n_tok, chs
 
     @torch.no_grad()
-    def _decide(self, state_text, questions, image=None):
-        from vega_common import QTYPES, route_adapters, softmax_np, thermal_features, thermal_tau
+    def _decide(self, state_text, questions, image=None, alpha="0.1", risk=None):
+        from ._common import QTYPES, route_adapters, softmax_np, thermal_features, thermal_tau
         t0 = time.time()
         qids = list(questions)
+        if not qids:
+            raise ValueError("decide_image/decide_text needs at least one question")
         qs = [self.d._internal(questions[k]) for k in qids]
         eng = self.d.engine
         # text states feed the engine's memory reader exactly like Vega.decide; the image path keeps the
@@ -149,24 +151,69 @@ class VegaVision:
         for rt in np.unique(route):
             sel = route == rt
             P[sel] = softmax_np(logits[sel], thermal_tau(self.d._cal(rt)["theta"], qt[sel], phys[sel]))
+        risk = str(risk) if risk is not None else self.d.risk
         answers = {}
         for r, (qid, q) in enumerate(zip(qids, qs)):
             k = int(mask[r].sum())
-            labels = list(q["crit"].keys()) if q["t"] == "choice" else [False, True]
+            # score questions have one label per level; only boolean collapses to [no, yes].
+            # Labelling every non-choice question [False, True] indexed off the end of this list
+            # for any score question with more than two levels.
+            labels = list(q["crit"].keys()) if q["t"] == "choice" else list(range(k)) if q["t"] == "score" \
+                else [False, True]
+            cal = self.d._cal(int(route[r]))
             p = P[r, :k]
-            a = {"probs": {str(labels[i]): float(p[i]) for i in range(k)}, "confidence": float(p.max()),
-                 "adapter": (self.d.adapters[int(route[r])]["name"] if route[r] >= 0 else None) if self.d.adapters else None}
+            conf = float(p.max())
+            best = int(p.argmax())
+            th = cal["conformal"].get(q["t"], {}).get(alpha)
+            # LAC set; the top option is always kept so the set is never empty. Same construction
+            # as _api.Vega.decide, so an image answer carries what a text answer carries.
+            pset = [labels[i] for i in range(k)
+                    if th is not None and (p[i] >= max(1.0 - th, 1e-12) or i == best)]
+            a = {"probs": {str(labels[i]): float(p[i]) for i in range(k)}, "confidence": conf,
+                 "prediction_set": pset if th is not None else None,
+                 "abstain": bool(conf < cal["abstain"].get(risk, 0.0)),
+                 "unbound": bool(float(out["nearest"][r]) > cal["unbound"]),
+                 "settle_steps": int(out["steps_used"][r]), "energy": float(-logits[r, :k].max())}
+            if self.d.adapters:
+                a["adapter"] = self.d.adapters[int(route[r])]["name"] if route[r] >= 0 else None
+                a["gate"] = float(gates[r].max()) if gates is not None else 0.0
             if q["t"] == "choice":
-                a["choice"] = labels[int(p.argmax())]
+                a["choice"] = labels[best]
+            elif q["t"] == "score":
+                a["score"] = best
+                a["expected_score"] = float((np.arange(k) * p).sum())
             else:
                 a["boolean"] = float(p[1])
             answers[qid] = a
         if self.dev.type == "mps":
             torch.mps.synchronize()
-        return {"answers": answers, "latency_ms": round(1000 * (time.time() - t0), 1), "n_tokens": n_tok}
+        return {"answers": answers, "latency_ms": round(1000 * (time.time() - t0), 1), "n_tokens": n_tok,
+                "views": 1}
 
-    def decide_image(self, image, questions):
-        return self._decide(VISION_STATE, questions, image=image.convert("RGB"))
+    def decide_image(self, image, questions, **kw):
+        """Answer questions about a picture.
 
-    def decide_text(self, text, questions):
-        return self._decide(self.dc.serialize_state(text), questions)
+        `image` is a PIL Image, a path to one, or an HxWx3 numpy array.
+        """
+        return self._decide(VISION_STATE, questions, image=_as_rgb_image(image), **kw)
+
+    def decide_text(self, text, questions, **kw):
+        return self._decide(self.dc.serialize_state(text), questions, **kw)
+
+
+def _as_rgb_image(image):
+    """Accept a PIL image, a path, or an HxWx3 array and return a PIL RGB image.
+
+    `decide_image` previously called `image.convert("RGB")` unconditionally, so a path or an array
+    raised AttributeError instead of working.
+    """
+    if hasattr(image, "convert"):          # already a PIL image
+        return image.convert("RGB")
+    try:
+        from PIL import Image
+    except ImportError:                   # pragma: no cover - only without the vision extra
+        raise ImportError("images need Pillow: pip install 'vegaml[vision]'") from None
+    if isinstance(image, (str, bytes)) or hasattr(image, "__fspath__"):
+        with Image.open(image) as im:
+            return im.convert("RGB")
+    return Image.fromarray(np.asarray(image).astype("uint8")).convert("RGB")

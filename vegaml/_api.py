@@ -62,6 +62,7 @@ class Vega:
             bb = self.cfg["backbone_name"]
         else:
             bb = self.cfg["backbone"]
+        self.backbone = bb     # the one actually used, so the vision path loads the same weights
         self.perc = perception or Perception(bb, self.device, self.cfg["feature_layers"], self.cfg["option_layers"])
         assert self.perc.feature_layers == self.cfg["feature_layers"], "backbone depth differs from training"
         self.engine = VegaEngine(self.cfg["d_model"], len(self.cfg["feature_layers"]), len(self.cfg["option_layers"]),

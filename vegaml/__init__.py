@@ -53,6 +53,7 @@ class Vega:
         self.engine = engine
         self.mode = mode
         self.heads: Dict[str, Tuple[TTTHead, Optional[float]]] = {}
+        self._vision = None      # the vision tower, loaded on first decide_image()
 
     # ------------------------------------------------------------------ loading
     @classmethod
@@ -231,15 +232,47 @@ class Vega:
         return answers
 
     # ------------------------------------------------------------------ images
-    def decide_image(self, image, questions: Mapping, **kw) -> Dict:
-        """The same typed interface over a picture, through the backbone's frozen vision encoder."""
-        if getattr(self, "_vision", None) is None:
+    def decide_image(self, image, questions: Mapping, mode: Optional[str] = None,
+                     alpha: str = "0.1", risk=None, **kw) -> Dict:
+        """The same typed interface over a picture, through the backbone's frozen vision encoder.
+
+        The vision tower is loaded on first use, so a text-only caller never pays for it. The image
+        path runs the engine, so it answers in "engine" shape whatever `mode` says: a TTT head reads
+        text features and has nothing to say about pixels. Every answer is marked
+        `readout: "engine"` so a caller reading a mixed result is not misled.
+
+        `image` is a PIL Image, a path to one, or an HxWx3 numpy array.
+        """
+        mode = mode or self.mode
+        if mode not in MODES:
+            raise ValueError("mode must be one of %s, got %r" % (", ".join(MODES), mode))
+        if self._vision is None:
+            from ._vision import VegaVision
+
+            # The same backbone the engine resolved for itself, not a re-derived guess: a checkpoint
+            # carrying a local backbone/ directory must load that, not a Hub id.
+            self._vision = VegaVision(self.engine.model_dir,
+                                      backbone=self.engine.backbone,
+                                      device=str(getattr(self.engine, "device", "cpu")), **kw)
+        out = self._vision.decide_image(image, questions, alpha=alpha, risk=risk)
+        out["mode"] = "engine"
+        for answer in out["answers"].values():
+            answer["readout"] = "engine"
+        return out
+
+    def decide_image_text(self, image, questions: Mapping, **kw) -> Dict:
+        """Parity check: answer the same questions through the vision path with the image withheld.
+
+        Useful for measuring what the picture itself contributed, the way the README's MMMU-Pro
+        "image withheld" row was measured.
+        """
+        if self._vision is None:
             from ._vision import VegaVision
 
             self._vision = VegaVision(self.engine.model_dir,
-                                      backbone=self.engine.cfg.get("backbone_name"),
-                                      device=str(getattr(self.engine, "device", "cpu")), **kw)
-        return self._vision.decide_image(image, questions)
+                                      backbone=self.engine.backbone,
+                                      device=str(getattr(self.engine, "device", "cpu")))
+        return self._vision.decide_text("", questions, **kw)
 
     def __repr__(self) -> str:
         return "Vega(mode=%r, heads=%d, max_len=%d)" % (
