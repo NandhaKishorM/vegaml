@@ -6,7 +6,7 @@ Three stages, run in order:
   python vega_finetune.py train                          # one GPU: the adapter, on cached features
   python vega_finetune.py eval                           # base engine vs the new adapter
 
-Why it splits that way. The language model is frozen and is the only expensive part: reading 18k
+Why it splits that way. The language model is frozen and is the only expensive part: reading ~24k
 short texts is a few GPU-minutes, and it happens exactly once. What is actually trained -- a rank-32
 adapter on seven engine projections plus a gate, about 0.8M parameters -- then runs on cached
 pooled features, where an epoch is seconds on one GPU. Sharding the read across both T4s is the only
@@ -71,6 +71,12 @@ QUESTION = {
         "surprise": "astonishment at something unexpected",
     },
 }
+# The dataset's integer labels index QUESTION["criteria"] positionally (see stage_extract), so the
+# two orders must agree or every example trains against the wrong label. A mismatch here produces an
+# adapter that scores near chance and reports itself as a success, so it is checked once, loudly.
+assert list(QUESTION["criteria"]) == EMOTIONS, \
+    "the dataset's label order is %s but the question's criteria are %s" % (
+        EMOTIONS, list(QUESTION["criteria"]))
 # The gate's negatives: a different public task, so "should this adapter fire" is a real question.
 NEG_QUESTION = {
     "type": "choice",
@@ -141,7 +147,7 @@ def stage_extract(args):
     path = vegaml.fetch(MODEL_REPO, token=HF_TOKEN)
     eng = Engine(path, backbone=BACKBONE, device=device, adapters="off")
 
-    class Holder:                      # the two attributes build_items needs, without a wrapper class
+    class Holder:                      # the attributes build_items needs, without a wrapper class
         pass
 
     v = Holder()
@@ -200,11 +206,17 @@ def load_split(name):
     parts = sorted(glob.glob(os.path.join(CACHE, "%s_rank*.npz" % name)))
     if not parts:
         raise SystemExit("no cached features for %r -- run the extract stage first" % name)
-    d = [np.load(p) for p in parts]
-    return (torch.from_numpy(np.concatenate([x["feats"] for x in d])),
-            torch.from_numpy(np.concatenate([x["opts"] for x in d])),
-            torch.from_numpy(np.concatenate([x["mask"] for x in d])),
-            torch.from_numpy(np.concatenate([x["y"] for x in d])))
+    # np.load on an .npz returns an NpzFile that holds the zip open until it is closed. Reading them
+    # without closing leaves every shard locked for the life of the process, which on Windows means
+    # the cache directory cannot then be deleted.
+    shards = []
+    for p in parts:
+        with np.load(p) as z:
+            shards.append({k: z[k] for k in z.files})
+    return (torch.from_numpy(np.concatenate([x["feats"] for x in shards])),
+            torch.from_numpy(np.concatenate([x["opts"] for x in shards])),
+            torch.from_numpy(np.concatenate([x["mask"] for x in shards])),
+            torch.from_numpy(np.concatenate([x["y"] for x in shards])))
 
 
 def engine_logits(engine, feats, opts, mask, qtype, n_steps=None):
@@ -219,6 +231,7 @@ def stage_train(args):
     import vegaml
     from vegaml._api import Vega as Engine
     from vegaml._common import (
+        ADAPTER_TARGETS,
         QTYPES,
         adapter_state,
         attach_adapter,
@@ -243,8 +256,10 @@ def stage_train(args):
     engine.adapter_mode = "auto"
     for p in engine.parameters():
         p.requires_grad_(False)
-    for path_ in ("world.net.1", "probe.net.1", "impulse.net.1", "to_z0.net.1", "to_p0.net.1",
-                  "well.net.1", "well.net.4"):
+    # The canonical list, the same one attach_adapter, adapter_state and load_adapter use. Typing
+    # the seven paths out a second time meant the script could train one set of projections while
+    # the metadata described another, if the package's list ever changed.
+    for path_ in ADAPTER_TARGETS:
         mod = engine
         for part in path_.split(".")[:-1]:
             mod = getattr(mod, part) if not part.isdigit() else mod[int(part)]
@@ -260,12 +275,22 @@ def stage_train(args):
     tr = load_split("train")
     va = load_split("valid")
     neg = load_split("neg")
-    log("train %d, valid %d, negatives %d" % (len(tr[3]), len(va[3]), len(neg[3])))
+    n = len(tr[3])
+    log("train %d, valid %d, negatives %d" % (n, len(va[3]), len(neg[3])))
+    if n < args.batch:
+        # The loop below takes whole batches, so a split smaller than one batch runs zero iterations
+        # and then divides by a zero `seen` on the log line. Reachable from the documented smoke
+        # test: a 96-row slice across 2 ranks is 48 rows per rank, and stage 2 is run with --batch 64.
+        raise SystemExit("--batch %d is larger than the %d training rows; lower --batch or raise "
+                         "--n-train" % (args.batch, n))
 
     qt_pos = torch.full((args.batch,), QTYPES["choice"], device=device)
     opt = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=0.01)
-    n = len(tr[3])
-    steps = max(1, n // args.batch) * args.epochs
+    # Iterations actually run per epoch is floor((n - batch) / batch) + 1, which equals n // batch
+    # only when batch divides n. Scheduling against n // batch cut the anneal tail off whenever it
+    # did not, so the final learning rate was not the scheduled minimum.
+    iters = max(1, (n - args.batch) // args.batch + 1)
+    steps = iters * args.epochs
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=steps)
     engine.train()
     step = 0
@@ -277,7 +302,9 @@ def stage_train(args):
             b = perm[s:s + args.batch]
             feats, opts, mask, y = (tr[0][b].to(device), tr[1][b].to(device),
                                     tr[2][b].to(device), tr[3][b].to(device))
-            _, logits = engine_logits(engine, feats, opts, mask, qt_pos[:len(b)])
+            # out_pos is reused by the gate step below rather than recomputed with identical
+            # arguments, which was doubling the cost of the positive forward pass every step.
+            out_pos, logits = engine_logits(engine, feats, opts, mask, qt_pos[:len(b)])
             loss = F.cross_entropy(logits, y)
 
             # the gate: open on this task, shut on a task it was not trained for
@@ -286,7 +313,6 @@ def stage_train(args):
             if len(nb) > 1:
                 nf, no, nm = neg[0][nb].to(device), neg[1][nb].to(device), neg[2][nb].to(device)
                 qt_neg = torch.full((len(nb),), QTYPES["choice"], device=device)
-                out_pos, _ = engine_logits(engine, feats, opts, mask, qt_pos[:len(b)])
                 out_neg, _ = engine_logits(engine, nf, no, nm, qt_neg)
                 g_pos = out_pos["gates"][:, j]
                 g_neg = out_neg["gates"][:, j]
@@ -336,20 +362,33 @@ def stage_train(args):
     acc = float((probs.argmax(1) == yv).mean())
     log("validation: acc %.4f  mean gate %.3f  open %.2f%%"
         % (acc, float(Gv.mean()), 100 * float((Gv >= 0.5).mean())))
+    # fit_thermal and conformal_thresholds both need 30 examples per question type and skip below
+    # that, silently: theta stays all zeros (tau = 1, so the probabilities are raw and
+    # uncalibrated) and the conformal table comes back empty. The adapter would then be written with
+    # gate_trained: True and prediction_set: None at inference, and the run looks like a success.
+    if len(yv) < 30:
+        raise SystemExit("validation split has %d rows; thermal calibration and conformal thresholds "
+                         "need at least 30. Raise --n-valid." % len(yv))
+    if not conf.get("choice"):
+        raise SystemExit("no conformal thresholds were fitted for choice questions, so this adapter "
+                         "could not produce a prediction set. The validation split is too small.")
+    if not np.any(theta):
+        raise SystemExit("thermal calibration returned an all-zero theta, which means no question type "
+                         "had enough validation rows to fit a temperature")
 
     os.makedirs(OUT, exist_ok=True)
     name = "emotion"
     save_file(adapter_state(engine, j), os.path.join(OUT, name + ".safetensors"))
     meta = {
         "name": name, "rank": args.rank, "alpha": float(args.rank),
-        "targets": ["world.net.1", "probe.net.1", "impulse.net.1", "to_z0.net.1", "to_p0.net.1",
-                    "well.net.1", "well.net.4"],
+        "targets": list(ADAPTER_TARGETS),
         "mode": "auto", "gate_trained": True, "gate_threshold": 0.5,
         "calibration": {"mode": "thermal", "theta": theta.tolist(), "conformal": conf},
         "trained_on": "dair-ai/emotion train split; gate negatives: fancyzhx/ag_news",
         "base_engine_sha256": base_sha,
         "adapter_params": int(n_par),
         "valid_accuracy": acc,
+        "valid_examples": int(len(yv)),
         "gate_stats": {"mean_gate": float(Gv.mean()), "open_frac": float((Gv >= 0.5).mean())},
     }
     with open(os.path.join(OUT, name + ".json"), "w") as fh:
@@ -396,7 +435,8 @@ def stage_eval(args):
     log("base engine      acc %.4f   ECE %.2f" % (acc_b, ece_b))
 
     tuned = Engine(path, backbone=BACKBONE, device=device, adapters="off")
-    meta = json.load(open(os.path.join(OUT, "emotion.json")))
+    with open(os.path.join(OUT, "emotion.json")) as fh:
+        meta = json.load(fh)
     j = load_adapter(tuned.engine, load_file(os.path.join(OUT, "emotion.safetensors")),
                      meta["rank"], meta["alpha"])
     tuned.engine.adapter_mode = "auto"   # not "on": "on" forces every gate to 1 without calling the
