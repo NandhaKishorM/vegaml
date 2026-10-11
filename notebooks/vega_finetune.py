@@ -235,8 +235,12 @@ def stage_train(args):
     base_sha = eng.base_sha256()
 
     j = attach_adapter(engine, rank=args.rank, alpha=float(args.rank))
-    engine.adapter_mode = "on"
-    trainable = [p for p in engine.parameters() if p.requires_grad]
+    # "auto", NOT "on". In "on" the engine returns a constant gate of 1 without ever calling
+    # gate_nets, so the gate loss below has no autograd graph, the gate network stays at its random
+    # initialisation, and the gate_trained: True written at the end would be a lie. Inference
+    # defaults to "auto", which is sigmoid(gate_net(x)) -- so training has to run "auto" for the
+    # gate it trains to be the gate that runs.
+    engine.adapter_mode = "auto"
     for p in engine.parameters():
         p.requires_grad_(False)
     for path_ in ("world.net.1", "probe.net.1", "impulse.net.1", "to_z0.net.1", "to_p0.net.1",
@@ -395,7 +399,9 @@ def stage_eval(args):
     meta = json.load(open(os.path.join(OUT, "emotion.json")))
     j = load_adapter(tuned.engine, load_file(os.path.join(OUT, "emotion.safetensors")),
                      meta["rank"], meta["alpha"])
-    tuned.engine.adapter_mode = "on"
+    tuned.engine.adapter_mode = "auto"   # not "on": "on" forces every gate to 1 without calling the
+    # gate network, so the reported mean gate would be a constant 1.000 and nothing about the
+    # trained gate would be measured. This is also the mode the loader uses by default.
     tuned.engine.eval()
     acc_a, ece_a, gate = run(tuned.engine, meta["calibration"]["theta"], j=j)
     log("+ emotion adapter acc %.4f   ECE %.2f   mean gate %.3f" % (acc_a, ece_a, gate))
