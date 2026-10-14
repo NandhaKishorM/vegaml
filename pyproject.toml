@@ -42,6 +42,8 @@ dev = ["pytest>=8.0", "ruff>=0.6", 'tomli>=2.0; python_version < "3.11"']
 serve = ["fastapi>=0.110", "uvicorn>=0.27"]
 # `pip install vegaml[mlx]` runs the decision engine on Apple silicon without torch (vegaml.mlx_engine).
 mlx = ['mlx>=0.30; platform_machine == "arm64" and sys_platform == "darwin"']
+# `pip install vegaml[structured]` adds the pydantic question-sheet helpers (vegaml.structured).
+structured = ["pydantic>=2.0"]
 
 [project.scripts]
 vegaml = "vegaml.cli:main"

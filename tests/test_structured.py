@@ -114,3 +114,15 @@ def test_non_string_literals_are_refused():
         n: Literal[1, 2] = Field(description="which?")
     with pytest.raises(TypeError, match="strings"):
         questions_from_model(M)
+
+
+def test_the_extra_is_declared():
+    import pathlib
+    import sys
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        import tomli as tomllib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    py = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    assert any(d.startswith("pydantic") for d in py["project"]["optional-dependencies"]["structured"])
