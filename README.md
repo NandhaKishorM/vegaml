@@ -97,8 +97,9 @@ print(out["answers"]["churn"]["readout"])        # 'ttt' here, 'engine' for anyt
 
 `fit` cross-validates every head and **discards any that does not beat chance**, because such a head
 has learned nothing and its probabilities are noise. `"auto"` is stricter still: it uses only heads
-whose accuracy is *known* to beat chance, so one fitted on too few examples to cross-validate is
-left to the engine rather than trusted unmeasured.
+whose cross-validated accuracy beats both chance and the engine's own accuracy on the same examples,
+so a head that loses to the engine or was fitted on too few examples to cross-validate is left to
+the engine.
 
 If what distinguishes your examples sits in a question's `instructions` rather than in the state, as
 it does in most intent classification, pass the question per example or every example gets an
