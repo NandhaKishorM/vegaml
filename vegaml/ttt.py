@@ -42,6 +42,8 @@ class TTTHead:
         # fewer than len(X) when a class was too rare to stratify. Defined from the start so that
         # reading it is never an AttributeError.
         self.cross_val_n = 0
+        self.cross_val_rows = []
+        self.engine_accuracy = None
 
     def fit(self, X, y_labels):
         X = np.asarray(X, dtype=np.float32)
@@ -55,6 +57,9 @@ class TTTHead:
                              "label_ids(question) so the two agree."
                              % (", ".join(repr(u) for u in unknown[:5]), self.labels))
         y = np.array([idx[s] for s in strs])
+        self.cross_val_n = 0
+        self.cross_val_rows = []
+        self.engine_accuracy = None
         self.mu, self.sd = X.mean(0), X.std(0) + 1e-6
         Z = (X - self.mu) / self.sd
         self.c = Z.mean(0)
@@ -104,6 +109,7 @@ class TTTHead:
         X = np.asarray(X, dtype=np.float32)
         y = [str(v) for v in y_labels]
         self.cross_val_n = 0
+        self.cross_val_rows = []
         if len(y) < 2 * folds:
             return None
         by_class = {}
@@ -128,6 +134,7 @@ class TTTHead:
             for rank, member in enumerate(rng.permutation(len(members))):
                 fold_of[positions[member]] = rank % folds
         hit, scored = 0, 0
+        scored_rows = []
         for f in range(folds):
             te = np.where(fold_of == f)[0]
             tr = np.where(fold_of != f)[0]
@@ -137,6 +144,8 @@ class TTTHead:
             for i in te:
                 p = h.predict(X[rows[i]])
                 hit += int(max(p, key=p.get) == rows_y[i])
+                scored_rows.append(int(rows[i]))
             scored += len(te)
         self.cross_val_n = scored
+        self.cross_val_rows = scored_rows
         return hit / scored if scored else None

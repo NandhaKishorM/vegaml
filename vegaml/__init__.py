@@ -25,8 +25,9 @@ Two readouts over the same frozen features, chosen with `mode`:
 
 "Worth using" is not "fitted": :meth:`fit` refuses a head whose cross-validated accuracy is at or
 below chance, since such a head has learned nothing and would dress noise up as a sharper answer.
-``"auto"`` goes further and uses only heads whose accuracy is *known* to beat chance, so a head
-fitted on too few examples to cross-validate is left to the engine.
+``"auto"`` goes further and uses only heads whose cross-validated accuracy beats both chance and
+the engine's own accuracy on the same examples, so a head that loses to the engine or was fitted on
+too few examples to cross-validate is left to the engine.
 """
 from __future__ import annotations
 
@@ -119,17 +120,19 @@ class Vega:
         reusing one question for every example hands them all an identical prompt, identical
         features, and a head fitted on noise. Pass the per-example question and that cannot happen.
 
-        One forward pass is run per example per question, so the cost is
-        ``len(examples) × len(questions)`` reads of the frozen backbone. That is seconds on a GPU
-        for a few dozen examples, and it is paid once.
+        Fitting reads the frozen backbone once per example for the head and, when the head beats
+        chance, scores the engine on the same cross-validated examples to check whether
+        ``mode="auto"`` should switch. That is seconds on a GPU for a few dozen examples, and it is
+        paid once.
 
         A head whose cross-validated accuracy is at or below chance is **not kept**: it has learned
-        nothing, and serving it would dress noise up as a sharper answer. The report says so per
-        question, with the accuracy that was measured.
+        nothing, and serving it would dress noise up as a sharper answer. A head that beats chance
+        is kept for deliberate ``mode="ttt"``, and ``mode="auto"`` uses it only when its
+        cross-validated accuracy also beats the engine's own accuracy on the same examples.
         """
         report: Dict[str, Dict] = {}
         for qid, q in questions.items():
-            X, y = [], []
+            X, y, rows = [], [], []
             for example in examples:
                 state, labels = example[0], example[1]
                 if qid not in labels:
@@ -138,7 +141,9 @@ class Vega:
                 asked = (per_example or {}).get(qid, q)
                 X.append(self.features(state, asked))
                 y.append(str(labels[qid]))
+                rows.append((state, asked))
             if len(X) < min_examples:
+                self.heads.pop(qid, None)
                 report[qid] = {"fitted": False, "examples": len(X),
                                "reason": "needs at least %d labelled examples" % min_examples}
                 continue
@@ -148,12 +153,14 @@ class Vega:
             # bare KeyError from inside the fit.
             bad = sorted({str(v) for v in y if str(v) not in set(labels_for_q)})
             if bad:
+                self.heads.pop(qid, None)
                 report[qid] = {"fitted": False, "examples": len(X),
                                "reason": ("label(s) %s in the examples are not options of this question, "
                                           "whose options are %s" % (", ".join(repr(b) for b in bad[:5]),
                                                                      labels_for_q))}
                 continue
             if len(set(y)) < 2:
+                self.heads.pop(qid, None)
                 report[qid] = {"fitted": False, "examples": len(X),
                                "reason": ("every example carries the same label (%r); there is nothing to "
                                           "distinguish" % y[0])}
@@ -165,21 +172,44 @@ class Vega:
             # "fine": the head is kept so mode="ttt" can still use it deliberately, but "auto"
             # leaves those questions to the engine rather than trust an unmeasured head.
             beats_chance = None if cv is None else cv > chance
+            engine_acc = None
+            if beats_chance:
+                scored_rows = [rows[i] for i in head.cross_val_rows]
+                scored_y = [y[i] for i in head.cross_val_rows]
+                engine_acc = self._engine_accuracy(qid, scored_rows, scored_y)
+                head.engine_accuracy = engine_acc
+            beats_engine = bool(beats_chance and engine_acc is not None and cv > engine_acc)
             if beats_chance is not False:
                 self.heads[qid] = (head, cv)
+            else:
+                self.heads.pop(qid, None)
             report[qid] = {"fitted": beats_chance is not False, "examples": len(X),
-                           "cv_accuracy": cv, "chance": round(chance, 3),
+                           "cv_accuracy": cv, "engine_accuracy": engine_acc,
+                           "chance": round(chance, 3),
                            "at_or_below_chance": None if cv is None else not beats_chance,
-                           "used_by_auto": bool(beats_chance)}
+                           "used_by_auto": beats_engine}
             if beats_chance is False:
                 report[qid]["reason"] = ("cross-validated accuracy %.3f is at or below the chance "
                                          "level %.3f, so the head was discarded" % (cv, chance))
+            elif beats_chance and not beats_engine:
+                report[qid]["reason"] = ("cross-validated accuracy %.3f does not beat the engine's "
+                                         "%.3f on these examples, so mode='auto' will leave this "
+                                         "question to the engine" % (cv, engine_acc))
             if cv is None:
                 report[qid]["cv_note"] = ("too few examples for %d-fold cross-validation, so the "
                                           "head's accuracy is unknown; %d or more would measure it. "
                                           "mode='auto' will leave this question to the engine"
                                           % (folds, 2 * folds))
         return report
+
+    def _engine_accuracy(self, qid: str, rows: Sequence[Tuple], y: Sequence[str]) -> float:
+        from .evals import _prediction
+
+        hit = 0
+        for (state, asked), label in zip(rows, y, strict=True):
+            ans = self.engine.decide(state, {qid: asked})["answers"][qid]
+            hit += int(_prediction(ans, asked["type"], label_ids(asked)) == label)
+        return hit / len(rows)
 
     # ------------------------------------------------------------------ deciding
     def decide(self, state, questions: Mapping, mode: Optional[str] = None, alpha: str = "0.1",
@@ -225,8 +255,7 @@ class Vega:
         return out
 
     def _auto(self, state, questions: Mapping, alpha: str, views: int) -> Dict:
-        """A head per question where one is known to beat chance, the engine everywhere else."""
-        by_head = [qid for qid in questions if self._head_beats_chance(qid, questions[qid])]
+        by_head = [qid for qid in questions if self._head_worth_using(qid, questions[qid])]
         by_engine = {qid: q for qid, q in questions.items() if qid not in by_head}
         out: Dict = {"mode": "auto", "answers": {}}
         if by_engine:
@@ -241,13 +270,18 @@ class Vega:
         out["answers"] = {qid: out["answers"][qid] for qid in questions}
         return out
 
-    def _head_beats_chance(self, qid: str, question: Mapping) -> bool:
-        """Only a head with a *measured* accuracy above chance is used without being asked for."""
+    def _head_worth_using(self, qid: str, question: Mapping) -> bool:
         head_cv = self.heads.get(qid)
         if head_cv is None:
             return False
-        _, cv = head_cv
-        return cv is not None and cv > 1.0 / max(len(label_ids(question)), 2)
+        head, cv = head_cv
+        options = label_ids(question)
+        if cv is None or options != head.labels:
+            return False
+        bar = 1.0 / max(len(options), 2)
+        if head.engine_accuracy is not None and head.engine_accuracy > bar:
+            bar = head.engine_accuracy
+        return cv > bar
 
     def _ttt_answers(self, state, questions: Mapping, skip_missing: bool = False) -> Dict:
         answers: Dict[str, Dict] = {}
