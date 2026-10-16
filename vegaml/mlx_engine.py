@@ -146,7 +146,7 @@ class MLXEngine:
     @classmethod
     def from_dir(cls, model_dir: str, device: str = "gpu") -> "MLXEngine":
         from safetensors.numpy import load_file
-        with open(os.path.join(model_dir, "vega_config.json")) as f:
+        with open(os.path.join(model_dir, "vega_config.json"), encoding="utf-8") as f:
             cfg = json.load(f)
         return cls(cfg, load_file(os.path.join(model_dir, "engine.safetensors")), device=device)
 

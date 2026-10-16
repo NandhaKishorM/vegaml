@@ -55,7 +55,7 @@ def _questions(args) -> Dict[str, Dict]:
     if args.questions:
         raw = args.questions
         if raw.startswith("@"):
-            with open(raw[1:]) as f:
+            with open(raw[1:], encoding="utf-8") as f:
                 raw = f.read()
         try:
             extra = json.loads(raw)
@@ -135,7 +135,7 @@ def main(argv: Optional[list] = None) -> int:
         _emit(result, args.pretty, sys.stdout)
         return 0
 
-    lines = sys.stdin if args.jsonl == "-" else open(args.jsonl)
+    lines = sys.stdin if args.jsonl == "-" else open(args.jsonl, encoding="utf-8")
     try:
         for n, line in enumerate(lines, 1):
             if not line.strip():

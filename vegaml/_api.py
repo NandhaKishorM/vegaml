@@ -39,7 +39,7 @@ class Vega:
         max_len: prompt token limit, overriding the trained one (e.g. 65536 to read long records; the engine was
         trained at its configured length, so accuracy beyond it has to be measured)."""
         from safetensors.torch import load_file
-        with open(os.path.join(model_dir, "vega_config.json")) as f:
+        with open(os.path.join(model_dir, "vega_config.json"), encoding="utf-8") as f:
             self.cfg = json.load(f)
         if max_len:
             self.cfg["trained_max_len"] = self.cfg["max_len"]
@@ -88,7 +88,7 @@ class Vega:
         assert adapters in ("auto", "on", "off"), adapters
         if adapters != "off":
             for js in sorted(glob.glob(os.path.join(model_dir, "adapters", "*.json"))):
-                meta = json.load(open(js))
+                meta = json.load(open(js, encoding="utf-8"))
                 if adapters == "auto" and not meta.get("gate_trained"):
                     print("vega: adapter '%s' has no trained gate (fitted without replay data); load it with "
                           "adapters=\"on\" to use it" % meta["name"])
