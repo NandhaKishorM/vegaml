@@ -46,7 +46,7 @@ SLOTS = ("state", "question", "last")   # pooled item vectors per feature layer;
 # ----------------------------------------------------------------------------- config
 def load_cfg(path: Optional[str] = None) -> Dict:
     path = path or os.environ.get("VEGA_CFG", "vega_config.json")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 

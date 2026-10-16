@@ -32,7 +32,7 @@ def _load_engine(model_dir: str):
     from safetensors.torch import load_file
 
     from ._common import VegaEngine
-    with open(os.path.join(model_dir, "vega_config.json")) as f:
+    with open(os.path.join(model_dir, "vega_config.json"), encoding="utf-8") as f:
         cfg = json.load(f)
     eng = VegaEngine(cfg["d_model"], len(cfg["feature_layers"]), len(cfg["option_layers"]), cfg)
     eng.load_state_dict(load_file(os.path.join(model_dir, "engine.safetensors")))

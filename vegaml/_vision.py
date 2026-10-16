@@ -35,7 +35,7 @@ class VegaVision:
         self.model = AutoModelForImageTextToText.from_pretrained(backbone, dtype=dtype).to(self.dev).eval()
         for p in self.model.parameters():
             p.requires_grad_(False)
-        cfg = json.load(open(os.path.join(model_dir, "vega_config.json")))
+        cfg = json.load(open(os.path.join(model_dir, "vega_config.json"), encoding="utf-8"))
         layers = dc.find_layers(self.model)
         self.feature_layers = dc.resolve_layers(cfg["feature_layers"], len(layers))
         self.option_layers = dc.resolve_layers(cfg["option_layers"], len(layers))
