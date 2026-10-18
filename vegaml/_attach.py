@@ -276,6 +276,15 @@ def _layer_specs(repo_or_path, anchor_cfg, token):
 
 
 # --------------------------------------------------------------------------------- attach
+def _copy_fresh(src, dst):
+    """Copy src to dst as a writable file. src usually sits in the read-only HF cache, and
+    shutil.copy would carry that mode over: a second attach into the same out_dir would then
+    open a read-only destination and die with PermissionError."""
+    if os.path.exists(dst):
+        os.chmod(dst, 0o644)
+    shutil.copyfile(src, dst)
+
+
 def attach(backbone: str, texts: Sequence[str], out_dir: str,
            repo_or_path: Optional[str] = None, examples: Optional[Sequence] = None,
            questions: Optional[Mapping] = None, refine_steps: int = 300,
@@ -410,7 +419,7 @@ def attach(backbone: str, texts: Sequence[str], out_dir: str,
     out_dir = os.path.abspath(out_dir)
     os.makedirs(out_dir, exist_ok=True)
     from safetensors.torch import save_file
-    shutil.copy(os.path.join(anchor_dir, "engine.safetensors"),
+    _copy_fresh(os.path.join(anchor_dir, "engine.safetensors"),
                 os.path.join(out_dir, "engine.safetensors"))
     save_file({k: v.detach().float().contiguous().cpu() for k, v in port.state_dict().items()},
               os.path.join(out_dir, "port.safetensors"))

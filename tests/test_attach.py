@@ -168,3 +168,24 @@ def test_attach_refuses_a_corpus_too_small():
 
     with pytest.raises(ValueError, match="at least 100"):
         attach("some/reader", ["one text"], "out")
+
+
+def test_attach_engine_copy_survives_a_readonly_previous_run(tmp_path):
+    # The anchor's engine.safetensors comes from the HF cache, where blobs are read-only, and
+    # the first attach carried that mode into out_dir. A second attach into the same dir must
+    # still land, and leave a writable file behind for the run after it.
+    from vegaml._attach import _copy_fresh
+
+    src = tmp_path / "cache" / "engine.safetensors"
+    src.parent.mkdir()
+    src.write_bytes(b"engine-bytes")
+    src.chmod(0o444)                                  # the HF cache's mode
+    dst = tmp_path / "out" / "engine.safetensors"
+    dst.parent.mkdir()
+
+    _copy_fresh(str(src), str(dst))
+    assert dst.read_bytes() == b"engine-bytes"
+    assert dst.stat().st_mode & 0o200                 # owner-writable, unlike the cache
+
+    _copy_fresh(str(src), str(dst))                   # the second attach: used to PermissionError
+    assert dst.read_bytes() == b"engine-bytes"
