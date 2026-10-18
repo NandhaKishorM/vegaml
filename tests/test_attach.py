@@ -189,3 +189,4 @@ def test_attach_engine_copy_survives_a_readonly_previous_run(tmp_path):
 
     _copy_fresh(str(src), str(dst))                   # the second attach: used to PermissionError
     assert dst.read_bytes() == b"engine-bytes"
+    assert not dst.stat().st_mode & 0o077              # healed copy: nothing for group or world

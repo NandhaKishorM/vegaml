@@ -281,7 +281,7 @@ def _copy_fresh(src, dst):
     shutil.copy would carry that mode over: a second attach into the same out_dir would then
     open a read-only destination and die with PermissionError."""
     if os.path.exists(dst):
-        os.chmod(dst, 0o644)
+        os.chmod(dst, 0o600)
     shutil.copyfile(src, dst)
 
 
