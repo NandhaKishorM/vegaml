@@ -138,6 +138,36 @@ def test_score_with_one_level_is_refused(fake):
         _run(["s", "--score", "stars=How positive?=only"])
 
 
+# ------------------------------------------------ an `=` inside the instruction, not a separator
+
+def test_boolean_instruction_keeps_its_equals_sign(fake):
+    """A boolean question has no option list, so every `=` after the id belongs to the prose.
+    The instruction is part of the prompt the model reads, so losing a tail changes the question."""
+    _run(["s", "--boolean", "sev=Score this from =0 to 4"])
+    assert fake.calls[0]["questions"]["sev"]["instructions"] == "Score this from =0 to 4"
+
+
+def test_choice_instruction_keeps_its_equals_sign(fake):
+    """Options are the text after the LAST `=`, so the instruction may contain one."""
+    _run(["s", "--choice", "team=Which team handles =payments? =billing,technical"])
+    q = fake.calls[0]["questions"]["team"]
+    assert q["instructions"] == "Which team handles =payments? "
+    assert q["criteria"] == ["billing", "technical"]
+
+
+def test_score_instruction_keeps_its_equals_sign(fake):
+    _run(["s", "--score", "sev=How severe? (=1 is lowest)=low,mid,high"])
+    q = fake.calls[0]["questions"]["sev"]
+    assert q["instructions"] == "How severe? (=1 is lowest)"
+    assert q["criteria"] == ["low", "mid", "high"]
+
+
+def test_choice_of_only_empty_options_is_refused(fake):
+    """`==` passes the raw-text check but splits to zero options; a choice needs at least one."""
+    with pytest.raises(SystemExit, match="names no options"):
+        _run(["s", "--choice", "team=Which team?=="])
+
+
 def test_pretty_prints_indented_json(fake, capsys):
     _run(["s", "--boolean", "q=x?", "--pretty"])
     out = capsys.readouterr().out
