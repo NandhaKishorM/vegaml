@@ -121,6 +121,36 @@ def test_the_command_refuses_bad_input_by_name(tmp_path, monkeypatch):
         main([str(ok), "--questions", "{}"])
 
 
+def test_the_command_names_an_unreadable_file_instead_of_tracebacking(tmp_path, monkeypatch):
+    """Every other input error here is a prefixed SystemExit; a bad path must not be a raw
+    FileNotFoundError, and must not cost a checkpoint load to report it."""
+    loaded = []
+    import vegaml
+    monkeypatch.setattr(vegaml, "load",
+                        lambda name=None, **kw: loaded.append(name) or _Scripted())
+    good_rows = tmp_path / "rows.jsonl"
+    good_rows.write_text("\n".join(json.dumps(r) for r in _rows(3)), encoding="utf-8")
+    good_sheet = tmp_path / "questions.json"
+    good_sheet.write_text(json.dumps(Q), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match=r"--questions cannot read 'nope\.json'"):
+        main([str(good_rows), "--questions", "@nope.json"])
+    with pytest.raises(SystemExit, match=r"cannot read 'nope\.jsonl'"):
+        main(["nope.jsonl", "--questions", "@" + str(good_sheet)])
+    assert not loaded, "a mistyped path is refused before the model is paid for"
+
+
+def test_the_command_reads_a_questions_file_it_is_given(tmp_path, monkeypatch, capsys):
+    sheet = tmp_path / "questions.json"
+    sheet.write_text(json.dumps(Q), encoding="utf-8")
+    data = tmp_path / "rows.jsonl"
+    data.write_text("\n".join(json.dumps(r) for r in _rows(10)), encoding="utf-8")
+    import vegaml
+    monkeypatch.setattr(vegaml, "load", lambda name=None, **kw: _Scripted())
+    assert main([str(data), "--questions", "@" + str(sheet)]) == 0
+    assert json.loads(capsys.readouterr().out)["overall"]["accuracy"] == 0.8
+
+
 def test_the_engines_boolean_spelling_counts_as_covered():
     class EngineSpelled(_Scripted):
         def decide(self, state, questions, mode=None, alpha="0.1", views=1):

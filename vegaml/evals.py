@@ -134,8 +134,9 @@ def evaluate(model, rows: Sequence[Mapping], questions: Mapping, mode: str = "en
 
 # ---------------------------------------------------------------------------- the command
 def _read_rows(path: str) -> List[Dict]:
-    f = sys.stdin if path == "-" else open(path, encoding="utf-8")
+    f = None
     try:
+        f = sys.stdin if path == "-" else open(path, encoding="utf-8")
         rows = []
         for i, line in enumerate(f):
             if line.strip():
@@ -144,13 +145,23 @@ def _read_rows(path: str) -> List[Dict]:
                 except json.JSONDecodeError as e:
                     raise SystemExit("vegaml-eval: line %d is not JSON: %s" % (i + 1, e)) from e
         return rows
+    except OSError as e:
+        raise SystemExit("vegaml-eval: cannot read %r: %s" % (path, e.strerror)) from None
     finally:
-        if f is not sys.stdin:
+        if f is not None and f is not sys.stdin:
             f.close()
 
 
 def _read_questions(spec: str) -> Dict:
-    text = open(spec[1:], encoding="utf-8").read() if spec.startswith("@") else spec
+    if spec.startswith("@"):
+        try:
+            with open(spec[1:], encoding="utf-8") as f:
+                text = f.read()
+        except OSError as e:
+            raise SystemExit("vegaml-eval: --questions cannot read %r: %s"
+                             % (spec[1:], e.strerror)) from None
+    else:
+        text = spec
     try:
         qs = json.loads(text)
     except json.JSONDecodeError as e:
