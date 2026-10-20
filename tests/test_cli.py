@@ -138,6 +138,57 @@ def test_score_with_one_level_is_refused(fake):
         _run(["s", "--score", "stars=How positive?=only"])
 
 
+# ------------------------------------------------ an `=` inside the instruction, not a separator
+
+def test_boolean_instruction_keeps_its_equals_sign(fake):
+    """A boolean question has no option list, so every `=` after the id belongs to the prose.
+    The instruction is part of the prompt the model reads, so losing a tail changes the question."""
+    _run(["s", "--boolean", "sev=Score this from =0 to 4"])
+    assert fake.calls[0]["questions"]["sev"]["instructions"] == "Score this from =0 to 4"
+
+
+def test_choice_instruction_keeps_its_equals_sign(fake):
+    """Options are the text after the LAST `=`, so the instruction may contain one."""
+    _run(["s", "--choice", "team=Which team handles =payments? =billing,technical"])
+    q = fake.calls[0]["questions"]["team"]
+    assert q["instructions"] == "Which team handles =payments? "
+    assert q["criteria"] == ["billing", "technical"]
+
+
+def test_score_instruction_keeps_its_equals_sign(fake):
+    _run(["s", "--score", "sev=How severe? (=1 is lowest)=low,mid,high"])
+    q = fake.calls[0]["questions"]["sev"]
+    assert q["instructions"] == "How severe? (=1 is lowest)"
+    assert q["criteria"] == ["low", "mid", "high"]
+
+
+def test_choice_of_only_empty_options_is_refused(fake):
+    """`==` passes the raw-text check but splits to zero options; a choice needs at least one."""
+    with pytest.raises(SystemExit, match="names no options"):
+        _run(["s", "--choice", "team=Which team?=="])
+
+
+# ------------------------------------------------------ an input file that is not there
+
+def test_questions_at_file_names_a_bad_path_without_tracebacking(fake):
+    with pytest.raises(SystemExit, match=r"--questions cannot read 'nope.json'"):
+        _run(["s", "--questions", "@nope.json"])
+
+
+def test_jsonl_names_a_bad_path_and_never_pays_for_the_checkpoint(fake):
+    """The batch file used to be opened after the load, so a typo cost a model download to report."""
+    with pytest.raises(SystemExit, match=r"--jsonl cannot read 'nope.jsonl'"):
+        _run(["--jsonl", "nope.jsonl", "--boolean", "q=x?"])
+    assert not fake.loads, "the path is checked before _load"
+
+
+def test_jsonl_still_reads_stdin(fake, capsys):
+    assert _run(["--jsonl", "-", "--boolean", "q=x?"],
+                fake_stdin='{"state": "refund me or I cancel"}\n') == 0
+    out = capsys.readouterr().out
+    assert json.loads(out)["answers"]["q"]["confidence"] == 0.9
+
+
 def test_pretty_prints_indented_json(fake, capsys):
     _run(["s", "--boolean", "q=x?", "--pretty"])
     out = capsys.readouterr().out

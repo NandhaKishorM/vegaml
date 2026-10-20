@@ -24,27 +24,52 @@ from typing import Dict, Optional
 
 
 def _parse_typed(specs, qtype: str, questions: Dict[str, Dict]) -> None:
-    """Fold "id=instructions" / "id=instructions=options" flag values into the questions dict."""
+    """Fold "id=instructions" / "id=instructions=options" flag values into the questions dict.
+
+    The id is the text before the FIRST `=`; the options, for a question that takes them, are the
+    text after the LAST one. Everything between is the instruction, `=` included: an instruction is
+    free-form prose that the model actually reads, so "sev=Score this =0 to 4" asks about
+    "Score this =0 to 4", not "Score this".
+    """
     for spec in specs or []:
-        parts = spec.split("=", 2)
-        if len(parts) < 2 or not parts[0].strip():
+        head, _, rest = spec.partition("=")
+        if not rest or not head.strip():
             tail = "=a,b,c" if qtype == "choice" else "=low,mid,high" if qtype == "score" else ""
             raise SystemExit("vegaml: --%s expects \"id=instructions%s\", got %r" % (qtype, tail, spec))
-        qid, ins = parts[0].strip(), parts[1].strip()
+        qid, rest = head.strip(), rest.strip()
         if qid in questions:
             raise SystemExit("vegaml: question id %r given more than once" % qid)
+        if qtype in ("choice", "score"):
+            ins, _, opts = rest.rpartition("=")
+            # no second `=` at all: the whole remainder is the instruction and the options are missing
+            if not ins:
+                ins, opts = rest, ""
+        else:
+            ins, opts = rest, None
         q: Dict = {"type": qtype, "instructions": ins}
         if qtype == "choice":
-            if len(parts) < 3 or not parts[2].strip():
+            if not opts.strip():
                 raise SystemExit("vegaml: --choice %r names no options; append =a,b,c" % qid)
-            q["criteria"] = [o.strip() for o in parts[2].split(",") if o.strip()]
+            q["criteria"] = [o.strip() for o in opts.split(",") if o.strip()]
+            if not q["criteria"]:
+                raise SystemExit("vegaml: --choice %r names no options; append =a,b,c" % qid)
         elif qtype == "score":
-            levels = [o.strip() for o in parts[2].split(",")] if len(parts) > 2 else []
+            levels = [o.strip() for o in opts.split(",")] if opts else []
             levels = [o for o in levels if o]
             if len(levels) < 2:
                 raise SystemExit("vegaml: --score %r needs its ordered levels; append =low,mid,high" % qid)
             q["criteria"] = levels
         questions[qid] = q
+
+
+def _read_text(path: str, flag: str) -> str:
+    """Read a file a flag pointed at, reporting a bad path in the same voice as every other
+    input error here. An unreadable path is the user's mistake, not a crash to dump."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError as e:
+        raise SystemExit("vegaml: %s cannot read %r: %s" % (flag, path, e.strerror)) from None
 
 
 def _questions(args) -> Dict[str, Dict]:
@@ -55,8 +80,7 @@ def _questions(args) -> Dict[str, Dict]:
     if args.questions:
         raw = args.questions
         if raw.startswith("@"):
-            with open(raw[1:], encoding="utf-8") as f:
-                raw = f.read()
+            raw = _read_text(raw[1:], "--questions")
         try:
             extra = json.loads(raw)
         except json.JSONDecodeError as e:
@@ -125,6 +149,19 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--pretty", action="store_true", help="indent the JSON instead of one compact object")
     args = ap.parse_args(argv)
 
+    # The batch file is opened before the checkpoint is loaded, so a mistyped path costs one short
+    # error rather than a model load the user already paid for to be told nothing.
+    lines = None
+    if args.jsonl is not None:
+        if args.jsonl == "-":
+            lines = sys.stdin
+        else:
+            try:
+                lines = open(args.jsonl, encoding="utf-8")
+            except OSError as e:
+                raise SystemExit("vegaml: --jsonl cannot read %r: %s"
+                                 % (args.jsonl, e.strerror)) from None
+
     default_questions = None
     if args.jsonl is None or args.boolean or args.choice or args.score or args.questions:
         default_questions = _questions(args)
@@ -135,7 +172,6 @@ def main(argv: Optional[list] = None) -> int:
         _emit(result, args.pretty, sys.stdout)
         return 0
 
-    lines = sys.stdin if args.jsonl == "-" else open(args.jsonl, encoding="utf-8")
     try:
         for n, line in enumerate(lines, 1):
             if not line.strip():
