@@ -168,6 +168,27 @@ def test_choice_of_only_empty_options_is_refused(fake):
         _run(["s", "--choice", "team=Which team?=="])
 
 
+# ------------------------------------------------------ an input file that is not there
+
+def test_questions_at_file_names_a_bad_path_without_tracebacking(fake):
+    with pytest.raises(SystemExit, match=r"--questions cannot read 'nope.json'"):
+        _run(["s", "--questions", "@nope.json"])
+
+
+def test_jsonl_names_a_bad_path_and_never_pays_for_the_checkpoint(fake):
+    """The batch file used to be opened after the load, so a typo cost a model download to report."""
+    with pytest.raises(SystemExit, match=r"--jsonl cannot read 'nope.jsonl'"):
+        _run(["--jsonl", "nope.jsonl", "--boolean", "q=x?"])
+    assert not fake.loads, "the path is checked before _load"
+
+
+def test_jsonl_still_reads_stdin(fake, capsys):
+    assert _run(["--jsonl", "-", "--boolean", "q=x?"],
+                fake_stdin='{"state": "refund me or I cancel"}\n') == 0
+    out = capsys.readouterr().out
+    assert json.loads(out)["answers"]["q"]["confidence"] == 0.9
+
+
 def test_pretty_prints_indented_json(fake, capsys):
     _run(["s", "--boolean", "q=x?", "--pretty"])
     out = capsys.readouterr().out

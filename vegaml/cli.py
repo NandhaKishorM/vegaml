@@ -62,6 +62,16 @@ def _parse_typed(specs, qtype: str, questions: Dict[str, Dict]) -> None:
         questions[qid] = q
 
 
+def _read_text(path: str, flag: str) -> str:
+    """Read a file a flag pointed at, reporting a bad path in the same voice as every other
+    input error here. An unreadable path is the user's mistake, not a crash to dump."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError as e:
+        raise SystemExit("vegaml: %s cannot read %r: %s" % (flag, path, e.strerror)) from None
+
+
 def _questions(args) -> Dict[str, Dict]:
     questions: Dict[str, Dict] = {}
     _parse_typed(args.boolean, "boolean", questions)
@@ -70,8 +80,7 @@ def _questions(args) -> Dict[str, Dict]:
     if args.questions:
         raw = args.questions
         if raw.startswith("@"):
-            with open(raw[1:], encoding="utf-8") as f:
-                raw = f.read()
+            raw = _read_text(raw[1:], "--questions")
         try:
             extra = json.loads(raw)
         except json.JSONDecodeError as e:
@@ -140,6 +149,19 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--pretty", action="store_true", help="indent the JSON instead of one compact object")
     args = ap.parse_args(argv)
 
+    # The batch file is opened before the checkpoint is loaded, so a mistyped path costs one short
+    # error rather than a model load the user already paid for to be told nothing.
+    lines = None
+    if args.jsonl is not None:
+        if args.jsonl == "-":
+            lines = sys.stdin
+        else:
+            try:
+                lines = open(args.jsonl, encoding="utf-8")
+            except OSError as e:
+                raise SystemExit("vegaml: --jsonl cannot read %r: %s"
+                                 % (args.jsonl, e.strerror)) from None
+
     default_questions = None
     if args.jsonl is None or args.boolean or args.choice or args.score or args.questions:
         default_questions = _questions(args)
@@ -150,7 +172,6 @@ def main(argv: Optional[list] = None) -> int:
         _emit(result, args.pretty, sys.stdout)
         return 0
 
-    lines = sys.stdin if args.jsonl == "-" else open(args.jsonl, encoding="utf-8")
     try:
         for n, line in enumerate(lines, 1):
             if not line.strip():
