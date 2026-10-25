@@ -12,6 +12,7 @@ surfaces around it.
 | [HTTP API](http-api.md) | `vegaml-serve`: the decide() call over HTTP |
 | [MCP](mcp.md) | `vegaml-mcp-server`: decide() as a tool for agents |
 | [Structured](structured.md) | A pydantic model as the question sheet and the answer |
+| [Guard](guard.md) | A prompt-injection guard as a question sheet, and how to score one |
 | [Cascade](router.md) | The 0.8B answers what it can settle, the 4B gets the rest |
 | [Calibration](calibration.md) | Refit the probabilities on your own labels |
 | [Evals](evals.md) | `vegaml-eval`: measure the model on your labelled decisions |

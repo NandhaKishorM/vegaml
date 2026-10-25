@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vegaml"
-version = "0.12.5"
+version = "0.13.0"
 description = "Typed decisions from a frozen language model and a small physics engine: calibrated probabilities, conformal sets, 73k context, images."
 readme = "README.md"
 requires-python = ">=3.10"
