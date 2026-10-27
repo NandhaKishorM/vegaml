@@ -16,8 +16,10 @@ answers coming out, which is one counter per option and did.
 
 The statistic is the population stability index, which is what model-risk teams in banking already
 read, with its conventional bands: below 0.1 is stable, 0.1 to 0.25 is worth watching, 0.25 and
-above means refit. Mean confidence and review rate are watched beside it, because a band whose
-review load has doubled is costing a pilot money whatever the mix says.
+above means refit. Mean confidence, review rate and the unbound rate are watched beside it: a
+band whose review load has doubled is costing a pilot money whatever the mix says, and a rising
+unbound rate is the engine saying the records now land far from every well it knows, which is the
+one signal here that sees new material rather than only a new mix.
 
 Nothing here needs labels. That is the point: labels are what recalibration needs, and this is what
 tells you to go and collect them.
@@ -67,12 +69,14 @@ class Monitor:
 
     def __init__(self, reference: Mapping[str, Mapping], min_answers: int = 50,
                  psi_watch: float = PSI_WATCH, psi_alert: float = PSI_ALERT,
-                 confidence_drop: float = 0.05, review_rate_rise: float = 0.05):
+                 confidence_drop: float = 0.05, review_rate_rise: float = 0.05,
+                 unbound_rise: float = 0.05):
         self.reference = {k: dict(v) for k, v in reference.items()}
         self.min_answers = int(min_answers)
         self.psi_watch, self.psi_alert = float(psi_watch), float(psi_alert)
         self.confidence_drop = float(confidence_drop)
         self.review_rate_rise = float(review_rate_rise)
+        self.unbound_rise = float(unbound_rise)
         self.counts: Dict[str, Dict] = {}
 
     @classmethod
@@ -95,7 +99,8 @@ class Monitor:
             if not isinstance(ans, Mapping):
                 continue
             c = self.counts.setdefault(qid, {"n": 0, "labels": {}, "confidence": 0.0,
-                                             "review": 0, "routed": 0})
+                                             "review": 0, "routed": 0,
+                                             "unbound": 0, "bounded": 0})
             chosen = self._chosen(ans)
             if chosen is None:
                 continue
@@ -106,6 +111,9 @@ class Monitor:
             if ans.get("route") in ("auto", "review"):
                 c["routed"] += 1
                 c["review"] += int(ans["route"] == "review")
+            if ans.get("unbound") is not None:
+                c["bounded"] += 1
+                c["unbound"] += int(bool(ans["unbound"]))
 
     @staticmethod
     def _chosen(ans: Mapping) -> Optional[str]:
@@ -157,6 +165,11 @@ class Monitor:
             if ref.get("review_rate") is not None:
                 out["reference_review_rate"] = round(float(ref["review_rate"]), 4)
                 out["review_rate_delta"] = round(out["review_rate"] - out["reference_review_rate"], 4)
+        if c.get("bounded"):
+            out["unbound_rate"] = round(c["unbound"] / c["bounded"], 4)
+            if ref.get("unbound_rate") is not None:
+                out["reference_unbound_rate"] = round(float(ref["unbound_rate"]), 4)
+                out["unbound_delta"] = round(out["unbound_rate"] - out["reference_unbound_rate"], 4)
         unseen = sorted(k for k in mix if k not in ref_mix)
         reasons = []
         status = "ok"
@@ -192,6 +205,15 @@ class Monitor:
         elif r is not None and r >= self.review_rate_rise:
             raise_to("watch", "review load is %.1f points over the %.1f%% the band was fitted at"
                               % (100 * r, 100 * out["reference_review_rate"]))
+        u = out.get("unbound_delta")
+        if u is not None and u >= 2 * self.unbound_rise:
+            raise_to("recalibrate", "unbound rate has risen %.1f points over the %.1f%% these "
+                                    "questions were fitted at, so the records are landing far "
+                                    "from anything the engine knows"
+                                    % (100 * u, 100 * out["reference_unbound_rate"]))
+        elif u is not None and u >= self.unbound_rise:
+            raise_to("watch", "unbound rate is %.1f points over the %.1f%% these questions were "
+                              "fitted at" % (100 * u, 100 * out["reference_unbound_rate"]))
         if n < self.min_answers:
             # Measured and reported, but not acted on: a mix drawn from a handful of answers moves
             # by itself, and paging on that is how a drift alert gets switched off for good.

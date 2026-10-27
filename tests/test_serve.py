@@ -23,12 +23,14 @@ class _FakeVega:
         self.calls = []
         self.engine = type("E", (), {"cfg": {"backbone_name": "test/backbone", "max_len": 73000}})()
 
-    def decide(self, state, questions, mode=None, alpha="0.1", views=1):
+    def decide(self, state, questions, mode=None, alpha="0.1", views=1, review_below=None):
         self.calls.append({"state": state, "questions": questions, "mode": mode,
-                           "alpha": alpha, "views": views})
+                           "alpha": alpha, "views": views, "review_below": review_below})
         if questions.get("boom"):
             raise ValueError("unknown question type 'boom'")
-        return {"answers": {q: {"confidence": 0.9} for q in questions},
+        return {"answers": {q: {"probs": {"false": 0.1, "true": 0.9}, "confidence": 0.9,
+                                "boolean": 0.9, "prediction_set": ["true"], "abstain": False}
+                            for q in questions},
                 "latency_ms": 1.0, "n_tokens": 7, "views": views}
 
 
@@ -52,7 +54,7 @@ def test_decide_round_trip(served):
     assert r.status_code == 200
     assert r.json()["answers"]["churn"]["confidence"] == 0.9
     assert v.calls[0] == {"state": "the state", "questions": Q, "mode": "engine",
-                          "alpha": "0.05", "views": 2}
+                          "alpha": "0.05", "views": 2, "review_below": None}
 
 
 def test_dict_states_pass_through_unflattened(served):
@@ -86,8 +88,67 @@ def test_lazy_load_happens_once(monkeypatch):
 
 def test_model_info_reports_the_checkpoint(served):
     _, client = served
-    assert client.get("/v1/model").json() == {"model": "fake", "backbone": "test/backbone",
-                                              "max_len": 73000, "mode": "auto", "heads_fitted": 0}
+    info = client.get("/v1/model").json()
+    assert info["model"] == "fake" and info["backbone"] == "test/backbone"
+    assert info["max_len"] == 73000 and info["mode"] == "auto" and info["heads_fitted"] == 0
+    assert info["calibration"] is None and info["band"] is None
+    # The audit block is what a deployment records beside each decision, so it is part of the
+    # server's description of itself rather than something a caller has to assemble.
+    assert info["audit"]["reader"] == "test/backbone"
+    assert "engine_sha256" in info["audit"] and "vegaml" in info["audit"]
+
+
+def test_every_answer_carries_the_audit_block(served):
+    _, client = served
+    audit = client.post("/v1/decide", json={"state": "s", "questions": Q}).json()["audit"]
+    assert audit["reader"] == "test/backbone" and audit["heads_fitted"] == []
+    assert audit["calibration_version"] is None
+
+
+def test_review_below_reaches_the_model_and_routes_the_answer():
+    v = _FakeVega()
+    client = TestClient(create_app(model=v, model_name="fake"))
+    client.post("/v1/decide", json={"state": "s", "questions": Q, "review_below": 0.95})
+    assert v.calls[-1]["review_below"] == 0.95
+
+
+def test_a_server_band_routes_when_the_caller_asks_for_nothing():
+    from vegaml.band import Band
+
+    v = _FakeVega()
+    client = TestClient(create_app(model=v, model_name="fake", band=Band(default=0.95)))
+    answer = client.post("/v1/decide", json={"state": "s", "questions": Q}).json()
+    # The fake answers 0.9, which is under the line.
+    assert answer["answers"]["churn"]["route"] == "review"
+    assert answer["band"]["review"] == 1
+    assert client.get("/v1/model").json()["band"] == {"default": 0.95, "questions": {}}
+
+
+def test_a_loaded_calibration_rescales_the_answer_and_stamps_its_version(tmp_path):
+    from vegaml.band import Band
+    from vegaml.calibrate import Calibration
+
+    cal = Calibration(0.1, {"churn": {"type": "boolean", "labels": ["false", "true"],
+                                      "temperature": 3.0, "qhat": 0.4, "examples": 40}},
+                      {}, Band(default=0.95), {}, {"reader": "test/backbone"})
+    v = _FakeVega()
+    client = TestClient(create_app(model=v, model_name="fake", calibration=cal))
+    out = client.post("/v1/decide", json={"state": "s", "questions": Q}).json()
+    a = out["answers"]["churn"]
+    assert a["calibrated"] is True
+    assert a["confidence"] < 0.9                       # a temperature above one softens it
+    assert a["route"] == "review"                      # and the band still fires
+    assert out["audit"]["calibration_version"] == cal.version()
+    assert client.get("/v1/model").json()["calibration"]["version"] == cal.version()
+
+
+def test_a_calibration_fitted_for_another_model_is_reported_not_refused(capsys):
+    from vegaml.calibrate import Calibration
+
+    cal = Calibration(0.1, {}, {}, None, {}, {"reader": "someone/else"})
+    client = TestClient(create_app(model=_FakeVega(), model_name="fake", calibration=cal))
+    assert client.post("/v1/decide", json={"state": "s", "questions": Q}).status_code == 200
+    assert "does not match the loaded model" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("body", [

@@ -1,4 +1,7 @@
 # docker compose up -> http://localhost:8000. VEGAML_MODEL="" is the 0.8B, "4b" the 4B.
+#
+# To serve a calibration fitted on your own labels, put calibration.json beside this file:
+#   VEGAML_CALIBRATION=/cal/calibration.json docker compose up
 services:
   vegaml:
     build: .
@@ -6,7 +9,11 @@ services:
       - "8000:8000"
     environment:
       VEGAML_MODEL: ${VEGAML_MODEL:-}
+      # One thread is the measured default for the shipped reader on CPU; see docs/cpu.md.
+      VEGAML_THREADS: ${VEGAML_THREADS:-1}
+      VEGAML_CALIBRATION: ${VEGAML_CALIBRATION:-}
     volumes:
       - hub-cache:/root/.cache/huggingface
+      - ./:/cal:ro
 volumes:
   hub-cache:

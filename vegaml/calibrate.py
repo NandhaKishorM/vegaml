@@ -27,6 +27,8 @@ was fitted on.
 """
 from __future__ import annotations
 
+import datetime
+import hashlib
 import json
 import math
 from typing import Dict, List, Mapping, Sequence, Tuple
@@ -129,12 +131,33 @@ class Calibration:
     """
 
     def __init__(self, alpha: float, questions: Dict[str, Dict], report: Dict[str, Dict],
-                 band=None, reference: Dict[str, Dict] = None):
+                 band=None, reference: Dict[str, Dict] = None,
+                 provenance: Dict = None):
         self.alpha = alpha
         self.questions = questions      # qid -> {type, labels, temperature, qhat, examples}
         self.report = report
         self.band = band                # a vegaml.band.Band, or None
         self.reference = reference or {}
+        self.provenance = dict(provenance or {})
+
+    # ------------------------------------------------------------------ identity
+    def checksum(self) -> str:
+        """sha256 of everything that changes an answer: alpha, the per-question fit, the band.
+
+        Not the report, not the reference mix and not the provenance, because those describe the
+        fit without taking part in it: two calibrations that round-trip to the same numbers should
+        have the same checksum whatever got written alongside them. A deployment records this next
+        to every decision, which is what lets a decision from last March be re-run and defended.
+        """
+        payload = {"alpha": self.alpha, "questions": self.questions,
+                   "band": None if self.band is None else
+                           {"questions": self.band.questions, "default": self.band.default}}
+        blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(blob).hexdigest()
+
+    def version(self) -> str:
+        """The short form of :meth:`checksum`, for a column and for a human to read aloud."""
+        return self.checksum()[:12]
 
     # ------------------------------------------------------------------ applying
     def apply(self, result: Mapping) -> Dict:
@@ -173,10 +196,14 @@ class Calibration:
     # ------------------------------------------------------------------ persistence
     def save(self, path) -> None:
         payload = {"alpha": self.alpha, "questions": self.questions, "report": self.report,
-                   "reference": self.reference}
+                   "reference": self.reference, "provenance": self.provenance}
         if self.band is not None:
             payload["band"] = {"questions": self.band.questions, "default": self.band.default,
                                "report": self.band.report}
+        # Written last and never read back into the checksum, so a file whose numbers were edited
+        # by hand no longer matches the version stamped on it.
+        payload["version"] = self.version()
+        payload["checksum"] = self.checksum()
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, sort_keys=True)
 
@@ -189,8 +216,39 @@ class Calibration:
         # failing: an old calibration is still a valid calibration.
         if band is not None:
             band = Band(band.get("questions"), band.get("default"), band.get("report"))
-        return cls(payload["alpha"], payload["questions"], payload["report"], band,
-                   payload.get("reference"))
+        cal = cls(payload["alpha"], payload["questions"], payload["report"], band,
+                  payload.get("reference"), payload.get("provenance"))
+        stamped = payload.get("checksum")
+        if stamped and stamped != cal.checksum():
+            # Loud, because the alternative is a deployment quietly serving numbers that no
+            # longer correspond to the version in its own audit log.
+            raise ValueError("this calibration file was changed after it was written: it is "
+                             "stamped %s but its contents hash to %s. Refit it, or drop the "
+                             "checksum if the edit was deliberate."
+                             % (stamped[:12], cal.checksum()[:12]))
+        return cal
+
+    def mismatches(self, model) -> List[str]:
+        """Why this calibration does not belong to ``model``, as plain sentences, or an empty list.
+
+        A temperature and a threshold are fitted for one engine behind one reader. Applied to
+        another they are arithmetic without meaning, and nothing in the numbers themselves says
+        so, which is exactly the kind of error that survives into production.
+        """
+        out: List[str] = []
+        want = self.provenance or {}
+        eng = getattr(model, "engine", model)
+        try:
+            got_engine = eng.base_sha256()
+        except Exception:
+            got_engine = None
+        got_reader = (getattr(eng, "cfg", {}) or {}).get("backbone_name")
+        if want.get("engine_sha256") and got_engine and want["engine_sha256"] != got_engine:
+            out.append("fitted for engine %s, loaded engine is %s"
+                       % (want["engine_sha256"][:12], got_engine[:12]))
+        if want.get("reader") and got_reader and want["reader"] != got_reader:
+            out.append("fitted for reader %r, loaded reader is %r" % (want["reader"], got_reader))
+        return out
 
 
 def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
@@ -227,6 +285,7 @@ def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
     for qid, q in questions.items():
         labels = label_ids(q)
         rows: List[Tuple[Dict[str, float], str]] = []
+        unbound: List[bool] = []
         bad: List[str] = []
         for example in examples:
             state, marks = example[0], example[1]
@@ -240,6 +299,10 @@ def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
             answer = model.decide(state, {qid: asked}, mode="engine",
                                   views=views)["answers"][qid]
             rows.append((canon_probs(answer["probs"], labels), label))
+            # How often the particle ended far from every well on data like this. Recorded so a
+            # rise in it later is measurable against something.
+            if answer.get("unbound") is not None:
+                unbound.append(bool(answer["unbound"]))
         if bad:
             report[qid] = {"calibrated": False, "examples": len(rows),
                            "reason": ("label(s) %s in the examples are not options of this "
@@ -263,7 +326,7 @@ def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
                        "temperature": temperature, "qhat": round(qhat, 6),
                        "ece_before": round(before, 4), "ece_after": round(after, 4),
                        "note": "ECE measured on the fitting examples themselves"}
-        reference[qid] = _reference(labels, scaled, band_rows)
+        reference[qid] = _reference(labels, scaled, band_rows, unbound)
         if want_band:
             cut = fit_threshold(band_rows, **band_kw)
             band_questions[qid] = {"threshold": cut["threshold"], "source": "fitted",
@@ -277,16 +340,38 @@ def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
             # unable to be empty. Say so next to the band that replaces it, so nobody wires a
             # pilot to the flag that cannot fire.
             reference[qid]["abstention_reachable"] = bool(qhat < 1.0 - 1.0 / max(len(labels), 2))
+    provenance = _provenance(model)
     band = None
     if want_band or band_default is not None:
         band = Band(band_questions, default=band_default,
                     report={"targeted": {k: v for k, v in band_kw.items() if v is not None},
                             "note": ("thresholds chosen on these examples; held_out in the report "
                                      "is the same rule scored on rows it did not choose on")})
-    return Calibration(alpha, fitted, report, band, reference)
+    return Calibration(alpha, fitted, report, band, reference, provenance)
 
 
-def _reference(labels, scaled, band_rows) -> Dict:
+def _provenance(model) -> Dict:
+    """Which engine, which reader, which vegaml, and when. Best effort: a test double has none
+    of it, and a calibration fitted against one is still a valid calibration."""
+    from . import __version__
+
+    out: Dict = {"vegaml": __version__,
+                 "fitted_at": datetime.datetime.now(datetime.timezone.utc)
+                 .replace(microsecond=0).isoformat()}
+    eng = getattr(model, "engine", model)
+    try:
+        out["engine_sha256"] = eng.base_sha256()
+    except Exception:
+        pass
+    cfg = getattr(eng, "cfg", None)
+    if isinstance(cfg, dict):
+        for key, field in (("reader", "backbone_name"), ("max_len", "max_len")):
+            if cfg.get(field) is not None:
+                out[key] = cfg[field]
+    return out
+
+
+def _reference(labels, scaled, band_rows, unbound=()) -> Dict:
     """What these examples looked like: the answer mix, the confidence level, the accuracy.
 
     Recorded so :mod:`vegaml.monitor` has something to compare live traffic against. The answer
@@ -299,8 +384,11 @@ def _reference(labels, scaled, band_rows) -> Dict:
     for p, y in scaled:
         counts[max(p, key=p.get)] += 1
         label_counts[y] += 1
-    return {"n": n,
-            "predicted_mix": {k: round(v / n, 6) for k, v in counts.items()},
-            "label_mix": {k: round(v / n, 6) for k, v in label_counts.items()},
-            "mean_confidence": round(sum(c for c, _ in band_rows) / n, 6),
-            "accuracy": round(sum(1 for _, ok in band_rows if ok) / n, 6)}
+    out = {"n": n,
+           "predicted_mix": {k: round(v / n, 6) for k, v in counts.items()},
+           "label_mix": {k: round(v / n, 6) for k, v in label_counts.items()},
+           "mean_confidence": round(sum(c for c, _ in band_rows) / n, 6),
+           "accuracy": round(sum(1 for _, ok in band_rows if ok) / n, 6)}
+    if unbound:
+        out["unbound_rate"] = round(sum(1 for u in unbound if u) / len(unbound), 6)
+    return out
