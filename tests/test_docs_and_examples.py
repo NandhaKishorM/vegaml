@@ -17,8 +17,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
 PAGES = ["index.md", "questions.md", "cli.md", "http-api.md", "mcp.md",
-         "structured.md", "router.md", "guard.md", "calibration.md", "evals.md", "langchain.md",
-         "onnx.md", "mlx.md", "docker.md"]
+         "structured.md", "router.md", "guard.md", "calibration.md", "escalation.md", "cpu.md",
+         "evals.md", "langchain.md", "onnx.md", "mlx.md", "docker.md"]
 
 
 @pytest.mark.parametrize("page", PAGES)

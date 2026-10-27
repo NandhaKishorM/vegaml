@@ -15,6 +15,8 @@ surfaces around it.
 | [Guard](guard.md) | A prompt-injection guard as a question sheet, and how to score one |
 | [Cascade](router.md) | The 0.8B answers what it can settle, the 4B gets the rest |
 | [Calibration](calibration.md) | Refit the probabilities on your own labels |
+| [Escalation](escalation.md) | The review band, `vegaml-calibrate`, and the drift watch |
+| [CPU serving](cpu.md) | Threads, readers and int8 on a box with no GPU |
 | [Evals](evals.md) | `vegaml-eval`: measure the model on your labelled decisions |
 | [LangChain](langchain.md) | Decisions as chain nodes: route, gate, annotate |
 | [ONNX](onnx.md) | Export the engine, run it anywhere onnxruntime does |

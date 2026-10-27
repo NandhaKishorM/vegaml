@@ -114,6 +114,10 @@ def _load(args):
         kw["device"] = args.device
     if args.max_len:
         kw["max_len"] = args.max_len
+    if args.threads:
+        kw["threads"] = args.threads
+    if args.quantize:
+        kw["quantize"] = args.quantize
     return vegaml.load(args.model, **kw)
 
 
@@ -146,6 +150,12 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--device", default=None,
                     help="cpu, cuda, cuda:N or mps; picked automatically when absent")
     ap.add_argument("--max-len", type=int, default=None, help="prompt token limit override")
+    ap.add_argument("--threads", type=int, default=None,
+                    help="torch threads for a CPU decision; 1 is what we measure fastest")
+    ap.add_argument("--quantize", default=None, choices=["int8"],
+                    help="int8 weights for the reader, CPU only: a quarter of the bytes, see docs/cpu.md")
+    ap.add_argument("--review-below", type=float, default=None, metavar="T",
+                    help="route any answer under this confidence to review (route=\"review\")")
     ap.add_argument("--pretty", action="store_true", help="indent the JSON instead of one compact object")
     args = ap.parse_args(argv)
 
@@ -168,7 +178,8 @@ def main(argv: Optional[list] = None) -> int:
 
     v = _load(args)
     if args.jsonl is None:
-        result = v.decide(_state(args), default_questions, mode=args.mode, alpha=args.alpha, views=args.views)
+        result = v.decide(_state(args), default_questions, mode=args.mode, alpha=args.alpha,
+                          views=args.views, review_below=args.review_below)
         _emit(result, args.pretty, sys.stdout)
         return 0
 
@@ -185,7 +196,8 @@ def main(argv: Optional[list] = None) -> int:
             qs = item.get("questions") or default_questions
             if not qs:
                 raise SystemExit("vegaml: --jsonl line %d has no questions and none came from flags" % n)
-            result = v.decide(item["state"], qs, mode=args.mode, alpha=args.alpha, views=args.views)
+            result = v.decide(item["state"], qs, mode=args.mode, alpha=args.alpha,
+                              views=args.views, review_below=args.review_below)
             _emit(result, args.pretty, sys.stdout)
     finally:
         if lines is not sys.stdin:

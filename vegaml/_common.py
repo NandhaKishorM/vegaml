@@ -331,11 +331,86 @@ def backbone_dtype(device):
     return torch.float32
 
 
+QUANTIZE = ("int8",)
+
+# x86 first: it is the meta-backend torch recommends there, and it dispatches to fbgemm or oneDNN
+# per operation. qnnpack is the ARM one, which is what an Apple or Graviton box has.
+_QENGINES = ("x86", "fbgemm", "qnnpack", "onednn")
+
+
+def quantized_engine():
+    """The int8 backend this torch build has, or None when it was built without one."""
+    supported = set(torch.backends.quantized.supported_engines)
+    for name in _QENGINES:
+        if name in supported:
+            return name
+    return None
+
+
+def quantize_backbone(model, how, device):
+    """Dynamic int8 over the reader's linear layers: the CPU path for a box with no GPU.
+
+    Dynamic rather than static quantization because there is nothing to calibrate against here and
+    no accuracy budget to spend on getting it wrong: weights go to int8 once, activations are
+    quantized per batch from their own observed range, and the engine stays in float32 on features
+    that come back float32 either way. The embedding and the norms are left alone, where int8 costs
+    accuracy and buys little.
+
+    Only on CPU. torch's dynamic kernels are fbgemm and qnnpack, and asking for them on CUDA or MPS
+    gets a model that silently falls back or refuses, which is worse than being told no.
+    """
+    if how not in QUANTIZE:
+        raise ValueError("quantize must be one of %s, got %r" % (", ".join(QUANTIZE), how))
+    if device.type != "cpu":
+        raise ValueError("quantize=%r is a CPU path: torch's dynamic quantization has no kernels "
+                         "for %s. Load with device=\"cpu\" to use it." % (how, device.type))
+    engine = quantized_engine()
+    if engine is None:
+        raise RuntimeError("this torch build has no int8 backend compiled in (supported engines: %s), "
+                           "so quantize=%r cannot run here. A pip wheel for this platform normally "
+                           "carries one; a source build needs USE_FBGEMM or USE_PYTORCH_QNNPACK."
+                           % (list(torch.backends.quantized.supported_engines), how))
+    # A global, and it is read both when the weights are packed below and on every forward after,
+    # so it is set here rather than left at whatever the process default happens to be. Leaving it
+    # unset is what makes linear_prepack fail with "NoQEngine" on a build that does have a backend.
+    torch.backends.quantized.engine = engine
+    return torch.ao.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
+
+
+def set_cpu_threads(threads=None):
+    """How many torch threads a CPU decision gets. Returns the count in force.
+
+    Worth setting, and worth measuring rather than guessing, because the best value belongs to the
+    READER and not to the engine. A typed decision is one short prefill: a few hundred tokens
+    through a frozen reader, once. On the shipped Qwen3.5 readers the linear-attention layers fall
+    back to a reference PyTorch implementation whenever the CUDA kernels are absent, which on CPU
+    is always, and that fallback does not thread: we measured 258 ms at one thread against 1268 ms
+    at four and 3612 ms at ten, with bit-identical answers. A plain-transformer reader has no such
+    fallback and scales the ordinary way, best at four on the same box. torch's own default is the
+    core count, which is right for training and wrong for at least one reader here.
+
+    ``threads=None`` leaves the process alone and says so once, because a library that quietly
+    reaches for a process-wide global is worse than one that tells you to. bench/cpu_path.py runs
+    the sweep on your own box, and docs/cpu.md has ours.
+    """
+    if threads:
+        n = max(1, int(threads))
+        torch.set_num_threads(n)
+        return n
+    n = torch.get_num_threads()
+    if n > 1:
+        print("vega: %d torch threads on CPU, torch's default. The best value here belongs to the "
+              "reader: on the shipped Qwen3.5 readers one thread measured 4.9x faster than four, "
+              "with identical answers, while a plain-transformer reader preferred four. Pass "
+              "threads=N to vegaml.load(); bench/cpu_path.py sweeps it on this box." % n)
+    return n
+
+
 # ----------------------------------------------------------------------------- frozen perception
 class Perception:
     """Frozen causal LM, cut off after the deepest layer we read. Returns pooled span features, never trained."""
 
-    def __init__(self, path, device, feature_layers, option_layers):
+    def __init__(self, path, device, feature_layers, option_layers, quantize=None):
         from transformers import AutoModelForCausalLM, AutoTokenizer
         self.tok = AutoTokenizer.from_pretrained(path)
         dtype = backbone_dtype(device)
@@ -347,6 +422,12 @@ class Perception:
         self.model.to(device).eval()
         for p in self.model.parameters():
             p.requires_grad_(False)
+        # Before find_layers and the capture hooks: quantization swaps module objects, so hooks
+        # registered on the float model would be registered on modules nothing calls any more.
+        self.quantized = None
+        if quantize:
+            self.model = quantize_backbone(self.model, quantize, device)
+            self.quantized = quantize
         self.device = device
         self.layers = find_layers(self.model)
         self.n_layers = len(self.layers)

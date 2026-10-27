@@ -13,9 +13,9 @@ class _FakeVega:
     def __init__(self):
         self.calls = []
 
-    def decide(self, state, questions, mode=None, alpha="0.1", views=1):
+    def decide(self, state, questions, mode=None, alpha="0.1", views=1, review_below=None):
         self.calls.append({"state": state, "questions": questions, "mode": mode,
-                           "alpha": alpha, "views": views})
+                           "alpha": alpha, "views": views, "review_below": review_below})
         return {"answers": {q: {"confidence": 0.9} for q in questions},
                 "latency_ms": 1.0, "n_tokens": 7, "views": views}
 

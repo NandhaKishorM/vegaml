@@ -162,3 +162,61 @@ def test_a_probability_key_naming_no_option_is_refused():
     from vegaml.calibrate import canon_probs
     with pytest.raises(ValueError, match="names no option"):
         canon_probs({"yes": 0.9, "no": 0.1}, ["false", "true"])
+
+
+# ---------------------------------------------------------------------- readout
+
+class _TwoReadouts:
+    """Answers differently in "engine" and "auto", so a test can tell which was calibrated."""
+
+    def __init__(self):
+        self.modes = []
+
+    def decide(self, state, questions, mode=None, alpha="0.1", views=1):
+        self.modes.append(mode)
+        # The engine is mildly overconfident; the head is wildly so, which is the real shape and
+        # the reason calibrating the served readout matters.
+        p = 0.70 if mode == "engine" else 0.99
+        claimed = state["claim"]
+        probs = {k: (p if k == claimed else 1.0 - p) for k in ("false", "true")}
+        answer = {"probs": probs}
+        if mode != "engine":
+            answer["readout"] = "ttt"
+        return {"answers": {q: dict(answer) for q in questions}}
+
+
+def test_the_readout_decides_which_answers_are_calibrated():
+    model = _TwoReadouts()
+    cal = calibrate(model, _boolean_examples(n=60), QB, readout="auto")
+    assert set(model.modes) == {"auto"}
+    assert cal.provenance["readout"] == "auto"
+    assert cal.report["churn"]["readout"] == "auto"
+    # The answers said they came from a head, and the report records that per question.
+    assert cal.report["churn"]["served_by"] == "ttt"
+
+
+def test_the_engine_is_still_the_default():
+    model = _TwoReadouts()
+    cal = calibrate(model, _boolean_examples(n=60), QB)
+    assert set(model.modes) == {"engine"}
+    assert cal.provenance["readout"] == "engine"
+
+
+def test_calibrating_the_wilder_readout_fits_the_stronger_temperature():
+    """A head's raw softmax needs more correction than the engine's, which is the whole point."""
+    engine = calibrate(_TwoReadouts(), _boolean_examples(n=120), QB)
+    head = calibrate(_TwoReadouts(), _boolean_examples(n=120), QB, readout="auto")
+    assert head.report["churn"]["temperature"] > engine.report["churn"]["temperature"]
+    assert head.report["churn"]["ece_before"] > engine.report["churn"]["ece_before"]
+    # And both end up honest, which is what a band is then allowed to cut on.
+    assert head.report["churn"]["ece_after"] < head.report["churn"]["ece_before"]
+
+
+def test_a_readout_that_is_not_a_mode_is_refused():
+    with pytest.raises(ValueError, match="readout must be one of"):
+        calibrate(_TwoReadouts(), _boolean_examples(n=20), QB, readout="physics")
+
+
+def test_both_is_refused_because_there_are_two_answers_to_calibrate():
+    with pytest.raises(ValueError, match="no one of them to calibrate"):
+        calibrate(_TwoReadouts(), _boolean_examples(n=20), QB, readout="both")
