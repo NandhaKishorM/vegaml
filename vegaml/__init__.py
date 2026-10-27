@@ -23,6 +23,12 @@ Two readouts over the same frozen features, chosen with `mode`:
   readout produced it, in ``readout``.
 * ``"both"`` returns both, side by side, which is the only honest way to compare them.
 
+An escalation band is separate from both readouts and sits over either: ``set_band`` (or
+``decide(review_below=...)``) marks every answer "auto" or "review" by its confidence, which
+is the escalation signal that works without labels and without the conformal set coming out
+empty. :func:`vegaml.calibrate.calibrate` fits that line to a precision target when you do
+have labels.
+
 "Worth using" is not "fitted": :meth:`fit` refuses a head whose cross-validated accuracy is at or
 below chance, since such a head has learned nothing and would dress noise up as a sharper answer.
 ``"auto"`` goes further and uses only heads whose cross-validated accuracy beats both chance and
@@ -35,14 +41,15 @@ import os
 import time
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
+from .band import Band
 from .hub import default_token, fetch, reader_dir
 from .ttt import TTTHead
 
 # MODES and label_ids are imported by name from outside this package (the bench adapter, the tests),
 # so they belong in __all__ rather than merely being present as module attributes.
-__all__ = ["load", "Vega", "TTTHead", "fetch", "default_token", "label_ids", "MODES",
+__all__ = ["load", "Vega", "TTTHead", "Band", "fetch", "default_token", "label_ids", "MODES",
            "attach", "calibrate", "__version__"]
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 
 MODES = ("auto", "engine", "ttt", "both")
 
@@ -53,11 +60,12 @@ class Vega:
     `mode` sets the default readout for :meth:`decide`; "auto" unless you change it.
     """
 
-    def __init__(self, engine, mode: str = "auto"):
+    def __init__(self, engine, mode: str = "auto", band: Optional[Band] = None):
         if mode not in MODES:
             raise ValueError("mode must be one of %s, got %r" % (", ".join(MODES), mode))
         self.engine = engine
         self.mode = mode
+        self.band = band
         self.heads: Dict[str, Tuple[TTTHead, Optional[float]]] = {}
         self._vision = None      # the vision tower, loaded on first decide_image()
         self._tokens_read = 0    # prompt tokens features() has read since decide() last reset it
@@ -68,12 +76,25 @@ class Vega:
                         device: Optional[str] = None, adapters: str = "auto",
                         mode: str = "auto", revision: Optional[str] = None,
                         token: Union[str, bool, None] = None,
-                        max_len: Optional[int] = None) -> "Vega":
+                        max_len: Optional[int] = None,
+                        quantize: Optional[str] = None,
+                        threads: Optional[int] = None) -> "Vega":
         """Load a checkpoint from the Hub or from a local directory.
 
         `token` is optional. Left as None it picks up `HF_TOKEN` from the environment if one is
         set, which is what makes a private or gated repository load; with nothing set, the public
         checkpoints load anonymously as before. Pass ``token=False`` to ignore the environment.
+
+        `quantize="int8"` loads the reader with dynamic int8 linear layers: a quarter of the weight
+        bytes, for a box that cannot hold the float reader. CPU only, and both what it costs in
+        latency and what it costs in agreement with the float reader are measured rather than
+        assumed; see docs/cpu.md.
+
+        `threads` is the setting that matters on a CPU box, and the right value belongs to the
+        reader. On the shipped Qwen3.5 readers one thread measured 4.9x faster than torch's default
+        of four, with identical answers, because their linear-attention layers run a reference
+        implementation on CPU that does not thread; a plain-transformer reader preferred four on the
+        same box. bench/cpu_path.py sweeps it, docs/cpu.md has our numbers.
         """
         # Imported here, not at module import: torch and transformers are only needed once a
         # checkpoint is actually being loaded.
@@ -90,7 +111,25 @@ class Vega:
         if backbone:
             path = reader_dir(path, backbone)
         return cls(_Engine(path, backbone=backbone, device=device, adapters=adapters,
-                           max_len=max_len), mode=mode)
+                           max_len=max_len, quantize=quantize, threads=threads), mode=mode)
+
+    # ------------------------------------------------------------------ escalation
+    def set_band(self, band) -> "Vega":
+        """Set the review band every :meth:`decide` routes against, or None to clear it.
+
+        Takes a :class:`vegaml.band.Band`, a ``{question_id: threshold}`` mapping, or one number
+        used as the line for every question. The band marks each answer "auto" or "review" by its
+        confidence, which is the only escalation signal that covers a TTT head (those answers carry
+        no conformal set and no abstain flag at all) and the only one that fires on an engine answer
+        whose conformal set cannot be empty.
+        """
+        if band is None or isinstance(band, Band):
+            self.band = band
+        elif isinstance(band, Mapping):
+            self.band = Band.from_thresholds(band)
+        else:
+            self.band = Band(default=float(band))
+        return self
 
     # ------------------------------------------------------------------ reading
     def features(self, state, question: Mapping):
@@ -222,7 +261,7 @@ class Vega:
 
     # ------------------------------------------------------------------ deciding
     def decide(self, state, questions: Mapping, mode: Optional[str] = None, alpha: str = "0.1",
-               views: int = 1) -> Dict:
+               views: int = 1, review_below: Optional[float] = None) -> Dict:
         """Answer every question from one read of the state.
 
         With ``mode="auto"``, the default, each question is answered by its head when it has one
@@ -234,6 +273,9 @@ class Vega:
 
         Every mode returns ``latency_ms``, ``n_tokens`` and ``views``. A head reads the frozen
         backbone too, one pass per question, so its time and tokens are counted with the engine's.
+
+        ``review_below`` is a one-call review band, overriding :meth:`set_band` for this call: every
+        answer whose confidence falls below it comes back ``route="review"``.
         """
         mode = mode or self.mode
         if mode not in MODES:
@@ -253,7 +295,7 @@ class Vega:
             out = self.engine.decide(state, questions, alpha=alpha, views=views)
             if mode == "engine":
                 out["mode"] = "engine"
-                return out
+                return self._banded(out, review_below)
             out["mode"] = "both"
             out["ttt"] = self._ttt_answers(state, questions, skip_missing=True)
         # These used to come only from engine.decide(), so a request answered wholly by heads had
@@ -261,7 +303,12 @@ class Vega:
         out["latency_ms"] = round(1000 * (time.perf_counter() - started), 1)
         out["n_tokens"] = out.get("n_tokens", 0) + self._tokens_read
         out.setdefault("views", 1)          # a head reads the state once
-        return out
+        return self._banded(out, review_below)
+
+    def _banded(self, out: Dict, review_below: Optional[float]) -> Dict:
+        """``out`` routed by the call's band, this instance's band, or not at all."""
+        band = self.band if review_below is None else Band(default=float(review_below))
+        return band.apply(out) if band is not None else out
 
     def _auto(self, state, questions: Mapping, alpha: str, views: int) -> Dict:
         by_head = [qid for qid in questions if self._head_worth_using(qid, questions[qid])]

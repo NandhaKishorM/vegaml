@@ -59,7 +59,7 @@ def test_api_places_perception_and_engine_on_selected_device(monkeypatch, tmp_pa
     seen = {}
 
     class FakePerception:
-        def __init__(self, path, device, feature_layers, option_layers):
+        def __init__(self, path, device, feature_layers, option_layers, quantize=None):
             seen["perception"] = device
             self.feature_layers = feature_layers
 

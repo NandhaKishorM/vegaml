@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vegaml"
-version = "0.13.0"
+version = "0.14.0"
 description = "Typed decisions from a frozen language model and a small physics engine: calibrated probabilities, conformal sets, 73k context, images."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -55,6 +55,7 @@ vegaml = "vegaml.cli:main"
 vegaml-serve = "vegaml.serve:main"
 vegaml-mcp-server = "vegaml.mcp_server:main"
 vegaml-eval = "vegaml.evals:main"
+vegaml-calibrate = "vegaml.recalibrate:main"
 
 [project.urls]
 Homepage = "https://github.com/NandhaKishorM/vegaml"
