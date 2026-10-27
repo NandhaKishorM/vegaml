@@ -34,7 +34,7 @@ import math
 from typing import Dict, List, Mapping, Sequence, Tuple
 
 from . import label_ids
-from .band import Band, crossfit, fit_threshold
+from .band import Band, crossfit, fit_threshold, sweep
 
 __all__ = ["calibrate", "Calibration", "ece", "canon_probs"]
 
@@ -194,26 +194,38 @@ class Calibration:
         return out
 
     # ------------------------------------------------------------------ persistence
-    def save(self, path) -> None:
+    def to_payload(self) -> Dict:
+        """The whole calibration as plain JSON-able data, stamped with its own version.
+
+        Separate from :meth:`save` because a deployment that keeps calibrations in a database
+        column should not have to go via a temporary file to do it.
+        """
         payload = {"alpha": self.alpha, "questions": self.questions, "report": self.report,
                    "reference": self.reference, "provenance": self.provenance}
         if self.band is not None:
             payload["band"] = {"questions": self.band.questions, "default": self.band.default,
                                "report": self.band.report}
-        # Written last and never read back into the checksum, so a file whose numbers were edited
-        # by hand no longer matches the version stamped on it.
+        # Written last and never read back into the checksum, so a payload whose numbers were
+        # edited by hand no longer matches the version stamped on it.
         payload["version"] = self.version()
         payload["checksum"] = self.checksum()
+        return payload
+
+    def save(self, path) -> None:
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, sort_keys=True)
+            json.dump(self.to_payload(), f, indent=2, sort_keys=True)
 
     @classmethod
     def load(cls, path) -> "Calibration":
         with open(path, encoding="utf-8") as f:
             payload = json.load(f)
+        return cls.from_payload(payload)
+
+    @classmethod
+    def from_payload(cls, payload: Mapping) -> "Calibration":
         band = payload.get("band")
-        # A file written before bands existed has no "band" key, and loads with none rather than
-        # failing: an old calibration is still a valid calibration.
+        # A payload written before bands existed has no "band" key, and loads with none rather
+        # than failing: an old calibration is still a valid calibration.
         if band is not None:
             band = Band(band.get("questions"), band.get("default"), band.get("report"))
         cal = cls(payload["alpha"], payload["questions"], payload["report"], band,
@@ -222,10 +234,9 @@ class Calibration:
         if stamped and stamped != cal.checksum():
             # Loud, because the alternative is a deployment quietly serving numbers that no
             # longer correspond to the version in its own audit log.
-            raise ValueError("this calibration file was changed after it was written: it is "
-                             "stamped %s but its contents hash to %s. Refit it, or drop the "
-                             "checksum if the edit was deliberate."
-                             % (stamped[:12], cal.checksum()[:12]))
+            raise ValueError("this calibration was changed after it was written: it is stamped "
+                             "%s but its contents hash to %s. Refit it, or drop the checksum if "
+                             "the edit was deliberate." % (stamped[:12], cal.checksum()[:12]))
         return cal
 
     def mismatches(self, model) -> List[str]:
@@ -253,9 +264,10 @@ class Calibration:
 
 def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
               alpha: float = 0.1, min_examples: int = 10,
-              views: int = 1, target_precision: float = None,
+              views: int = 1, readout: str = "engine", target_precision: float = None,
               review_rate: float = None, max_review_rate: float = 1.0,
-              band_confidence: float = 0.95, band_default: float = None) -> Calibration:
+              band_confidence: float = 0.95, band_default: float = None,
+              frontier: bool = False) -> Calibration:
     """Fit a :class:`Calibration` from labelled examples, one engine read per example.
 
     ``examples`` has :meth:`Vega.fit`'s shape: ``(state, {question_id: label})``, with an
@@ -275,6 +287,12 @@ def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
         raise ValueError("alpha is a miscoverage rate in (0, 1), got %r" % (alpha,))
     if target_precision is not None and review_rate is not None:
         raise ValueError("give target_precision or review_rate, not both")
+    from . import MODES
+    if readout not in MODES:
+        raise ValueError("readout must be one of %s, got %r" % (", ".join(MODES), readout))
+    if readout == "both":
+        raise ValueError("readout=\"both\" returns two answers per question and there is no one "
+                         "of them to calibrate; use \"engine\", \"ttt\" or \"auto\"")
     want_band = target_precision is not None or review_rate is not None
     band_kw = {"target_precision": target_precision, "review_rate": review_rate,
                "max_review_rate": max_review_rate, "confidence": band_confidence}
@@ -282,6 +300,9 @@ def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
     report: Dict[str, Dict] = {}
     band_questions: Dict[str, Dict] = {}
     reference: Dict[str, Dict] = {}
+    # mode="auto" answers each question with whichever readout wins for it, and the answers say
+    # which. Recorded so the file names the readout it was fitted against, per question.
+    readouts: Dict[str, str] = {}
     for qid, q in questions.items():
         labels = label_ids(q)
         rows: List[Tuple[Dict[str, float], str]] = []
@@ -296,9 +317,11 @@ def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
                 bad.append(label)
                 continue
             asked = (example[2] if len(example) > 2 else {}).get(qid, q)
-            answer = model.decide(state, {qid: asked}, mode="engine",
+            answer = model.decide(state, {qid: asked}, mode=readout,
                                   views=views)["answers"][qid]
             rows.append((canon_probs(answer["probs"], labels), label))
+            if answer.get("readout"):
+                readouts[qid] = answer["readout"]
             # How often the particle ended far from every well on data like this. Recorded so a
             # rise in it later is measurable against something.
             if answer.get("unbound") is not None:
@@ -322,11 +345,14 @@ def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
         fitted[qid] = {"type": q["type"], "labels": labels,
                        "temperature": temperature, "qhat": round(qhat, 6),
                        "examples": len(rows)}
-        report[qid] = {"calibrated": True, "examples": len(rows),
+        report[qid] = {"calibrated": True, "examples": len(rows), "readout": readout,
+                       "served_by": readouts.get(qid, readout),
                        "temperature": temperature, "qhat": round(qhat, 6),
                        "ece_before": round(before, 4), "ece_after": round(after, 4),
                        "note": "ECE measured on the fitting examples themselves"}
         reference[qid] = _reference(labels, scaled, band_rows, unbound)
+        if frontier:
+            report[qid]["frontier"] = sweep(band_rows, band_confidence)
         if want_band:
             cut = fit_threshold(band_rows, **band_kw)
             band_questions[qid] = {"threshold": cut["threshold"], "source": "fitted",
@@ -341,6 +367,7 @@ def calibrate(model, examples: Sequence[Tuple], questions: Mapping,
             # pilot to the flag that cannot fire.
             reference[qid]["abstention_reachable"] = bool(qhat < 1.0 - 1.0 / max(len(labels), 2))
     provenance = _provenance(model)
+    provenance["readout"] = readout
     band = None
     if want_band or band_default is not None:
         band = Band(band_questions, default=band_default,

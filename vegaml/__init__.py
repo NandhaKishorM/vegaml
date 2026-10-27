@@ -157,7 +157,7 @@ class Vega:
 
     # ------------------------------------------------------------------ fitting
     def fit(self, examples: Sequence[Tuple], questions: Mapping, folds: int = 5,
-            min_examples: int = 6) -> Dict[str, Dict]:
+            min_examples: int = 6, progress=None) -> Dict[str, Dict]:
         """Fit one TTT head per question from labelled examples.
 
         `examples` is a sequence of ``(state, {question_id: label})``, or
@@ -177,10 +177,17 @@ class Vega:
         nothing, and serving it would dress noise up as a sharper answer. A head that beats chance
         is kept for deliberate ``mode="ttt"``, and ``mode="auto"`` uses it only when its
         cross-validated accuracy also beats the engine's own accuracy on the same examples.
+
+        ``progress`` is called as ``progress(stage, question_id, done, total)`` while the rows are
+        read, where stage is "features" or "engine". It exists because reading the rows is the
+        whole cost and it takes minutes: anything with a progress bar in front of a user needs to
+        know how far along it is, and the alternative is a bar that sits at zero for the longest
+        part of the job.
         """
         report: Dict[str, Dict] = {}
         for qid, q in questions.items():
             X, y, rows = [], [], []
+            wanted = sum(1 for e in examples if qid in e[1])
             for example in examples:
                 state, labels = example[0], example[1]
                 if qid not in labels:
@@ -190,6 +197,8 @@ class Vega:
                 X.append(self.features(state, asked))
                 y.append(str(labels[qid]))
                 rows.append((state, asked))
+                if progress:
+                    progress("features", qid, len(X), wanted)
             if len(X) < min_examples:
                 self.heads.pop(qid, None)
                 report[qid] = {"fitted": False, "examples": len(X),
@@ -224,7 +233,7 @@ class Vega:
             if beats_chance:
                 scored_rows = [rows[i] for i in head.cross_val_rows]
                 scored_y = [y[i] for i in head.cross_val_rows]
-                engine_acc = self._engine_accuracy(qid, scored_rows, scored_y)
+                engine_acc = self._engine_accuracy(qid, scored_rows, scored_y, progress)
                 head.engine_accuracy = engine_acc
             beats_engine = bool(beats_chance and engine_acc is not None and cv > engine_acc)
             if beats_chance is not False:
@@ -250,13 +259,21 @@ class Vega:
                                           % (folds, 2 * folds))
         return report
 
-    def _engine_accuracy(self, qid: str, rows: Sequence[Tuple], y: Sequence[str]) -> float:
+    def _engine_accuracy(self, qid: str, rows: Sequence[Tuple], y: Sequence[str],
+                         progress=None) -> float:
+        """The engine's own accuracy on the rows the head was cross-validated on.
+
+        This is a second read of each of those rows, which is why ``fit`` costs about two reads
+        per labelled example rather than one, and why the progress callback reports it separately.
+        """
         from .evals import _prediction
 
         hit = 0
-        for (state, asked), label in zip(rows, y, strict=True):
+        for i, ((state, asked), label) in enumerate(zip(rows, y, strict=True), 1):
             ans = self.engine.decide(state, {qid: asked})["answers"][qid]
             hit += int(_prediction(ans, asked["type"], label_ids(asked)) == label)
+            if progress:
+                progress("engine", qid, i, len(rows))
         return hit / len(rows)
 
     # ------------------------------------------------------------------ deciding
