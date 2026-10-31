@@ -24,5 +24,5 @@ surfaces around it.
 | [Docker](docker.md) | The HTTP server as a container |
 
 Every extra is additive and none changes the core: `pip install vegaml` stays enough for the
-Python API, and `vegaml[serve]`, `[mcp]`, `[structured]`, `[onnx]` and `[mlx]` each add exactly
-one of the surfaces above.
+Python API, and `vegaml[serve]`, `[mcp]`, `[structured]`, `[onnx]`, `[mlx]` and `[audio]` each add
+exactly one surface: the last brings soundfile for `decide_audio` on audio files.
