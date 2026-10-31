@@ -79,6 +79,16 @@ def test_an_unreadable_type_is_named_in_the_error():
         to_waveform({"not": "audio"}, sampling_rate=TARGET_SR)
 
 
+def test_the_type_error_does_not_need_soundfile_installed(monkeypatch):
+    """The release gate caught this: a dict reached the soundfile import before the type check,
+    so on a machine without the audio extra the caller saw ImportError instead of their bug."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "soundfile", None)
+    with pytest.raises(TypeError, match="dict"):
+        to_waveform({"not": "audio"}, sampling_rate=TARGET_SR)
+
+
 # ------------------------------------------------------------------ decide_audio
 def test_text_only_callers_never_pay_for_the_transcriber():
     assert Vega(_Engine())._audio is None

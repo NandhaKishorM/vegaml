@@ -65,7 +65,9 @@ def to_waveform(audio, sampling_rate: Optional[int] = None) -> np.ndarray:
             raise ValueError("a numpy waveform needs sampling_rate=, because a wrong guess here "
                              "degrades the transcript silently")
         wave = audio
-    else:
+    elif isinstance(audio, (bytes, bytearray, str, os.PathLike)):
+        # The type check comes before the import, so a caller who passed something unreadable is
+        # told so even on a machine without the audio extra installed.
         try:
             import soundfile as sf
         except ImportError as e:
@@ -73,11 +75,11 @@ def to_waveform(audio, sampling_rate: Optional[int] = None) -> np.ndarray:
                               "A raw numpy waveform with sampling_rate= works without it.") from e
         if isinstance(audio, (bytes, bytearray)):
             wave, sampling_rate = sf.read(io.BytesIO(bytes(audio)), always_2d=False)
-        elif isinstance(audio, (str, os.PathLike)):
-            wave, sampling_rate = sf.read(os.fspath(audio), always_2d=False)
         else:
-            raise TypeError("audio must be a path, raw audio-file bytes, or a 1-D numpy waveform, "
-                            "got %r" % type(audio).__name__)
+            wave, sampling_rate = sf.read(os.fspath(audio), always_2d=False)
+    else:
+        raise TypeError("audio must be a path, raw audio-file bytes, or a 1-D numpy waveform, "
+                        "got %r" % type(audio).__name__)
     wave = np.asarray(wave)
     if wave.ndim == 2:          # stereo: average, do not pick a side
         wave = wave.mean(axis=1)
