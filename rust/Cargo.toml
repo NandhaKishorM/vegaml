@@ -1,0 +1,29 @@
+[package]
+name = "vegaml"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+description = "Rust inference port of the VegaML decision engine (frozen LM reader + latent decision physics)"
+repository = "https://github.com/NandhaKishorM/vegaml"
+publish = false
+
+[features]
+default = ["llama"]
+# GGUF reader through llama.cpp (needs a C/C++ toolchain and libclang for bindgen).
+llama = ["dep:llama-cpp-2", "dep:llama-cpp-sys-2"]
+
+[dependencies]
+anyhow = "1"
+libm = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+llama-cpp-2 = { version = "=0.1.160", optional = true, default-features = false, features = ["openmp"] }
+llama-cpp-sys-2 = { version = "=0.1.160", optional = true, default-features = false }
+
+[[example]]
+name = "golden"
+required-features = ["llama"]
+
+[profile.release]
+debug = false
