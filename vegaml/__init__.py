@@ -49,7 +49,7 @@ from .ttt import TTTHead
 # so they belong in __all__ rather than merely being present as module attributes.
 __all__ = ["load", "Vega", "TTTHead", "Band", "fetch", "default_token", "label_ids", "MODES",
            "attach", "calibrate", "__version__"]
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 
 MODES = ("auto", "engine", "ttt", "both")
 
@@ -68,6 +68,7 @@ class Vega:
         self.band = band
         self.heads: Dict[str, Tuple[TTTHead, Optional[float]]] = {}
         self._vision = None      # the vision tower, loaded on first decide_image()
+        self._audio = None       # the speech transcriber, loaded on first decide_audio()
         self._tokens_read = 0    # prompt tokens features() has read since decide() last reset it
 
     # ------------------------------------------------------------------ loading
@@ -438,6 +439,40 @@ class Vega:
                                       backbone=self.engine.backbone,
                                       device=str(getattr(self.engine, "device", "cpu")))
         return self._vision.decide_text("", questions, **kw)
+
+    # ------------------------------------------------------------------ audio
+    def decide_audio(self, audio, questions: Mapping, asr: Optional[str] = None,
+                     language: Optional[str] = None, sampling_rate: Optional[int] = None,
+                     **kw) -> Dict:
+        """The same typed interface over speech, through a small local transcriber.
+
+        Two honest stages rather than one pretend omni-model: a small speech-recognition
+        checkpoint turns the recording into text, and that text is a state :meth:`decide` already
+        answers. Because the engine sees text, everything the text path has applies unchanged,
+        fitted heads included, which the image path cannot say. The default transcriber is
+        distil-whisper (166M, English); pass `asr="openai/whisper-tiny"` (39M) for multilingual
+        traffic or `asr="UsefulSensors/moonshine-tiny"` (27M) for the smallest front end. It is
+        loaded on first use and reused, so a text-only caller never pays for it.
+
+        `audio` is a path to an audio file, raw file bytes, or a float waveform with
+        `sampling_rate=` said out loud. The response carries `transcript` and `asr`, because a
+        decision made on words the caller never saw cannot be audited: a wrong transcript is the
+        transcriber's error, a wrong answer about a correct transcript is ours.
+        """
+        from ._audio import DEFAULT_ASR, Transcriber, to_waveform
+
+        want = asr or DEFAULT_ASR
+        if self._audio is None or self._audio.model != want:
+            self._audio = Transcriber(want, device=str(getattr(self.engine, "device", "cpu")))
+        transcript = self._audio.transcribe(to_waveform(audio, sampling_rate), language=language)
+        if not transcript:
+            # An empty transcript is silence or noise; answering questions about it would be
+            # answering about the empty string with full confidence. Say what happened instead.
+            raise ValueError("the transcriber heard no speech in that audio; nothing to decide on")
+        out = self.decide(transcript, questions, **kw)
+        out["transcript"] = transcript
+        out["asr"] = self._audio.model
+        return out
 
     def __repr__(self) -> str:
         return "Vega(mode=%r, heads=%d, max_len=%d)" % (

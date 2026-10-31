@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vegaml"
-version = "0.14.0"
-description = "Typed decisions from a frozen language model and a small physics engine: calibrated probabilities, conformal sets, 73k context, images."
+version = "0.15.0"
+description = "Typed decisions from a frozen language model and a small physics engine: calibrated probabilities, conformal sets, 73k context, images, speech."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -37,6 +37,10 @@ dependencies = [
 # transformers' Qwen3VL processor loads torchvision on the way in and refuses to run without it, so the
 # extra has to carry it; leave the version open and let the resolver match the installed torch.
 vision = ["pillow>=10.0", "torchvision"]
+# The audio path: a small ASR checkpoint runs through transformers (already a core dependency), and
+# soundfile decodes the file; libsndfile 1.1+ reads mp3 as well as wav, flac and ogg. A caller who
+# hands in a raw numpy waveform with sampling_rate= needs none of this extra.
+audio = ["soundfile>=0.12"]
 dev = ["pytest>=8.0", "ruff>=0.6", 'tomli>=2.0; python_version < "3.11"']
 # `pip install vegaml[serve]` adds the HTTP server (vegaml.serve / the vegaml-serve command).
 serve = ["fastapi>=0.110", "uvicorn>=0.27"]

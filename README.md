@@ -344,6 +344,37 @@ present exactly as on the text path. `decide_image` always runs the engine and m
 measure what the picture contributed, `decide_image_text` answers the same questions through the same
 path with the image withheld.
 
+### Audio
+
+*Added in 0.15.0.*
+
+```python
+answer = v.decide_audio("call.wav",
+    {"act": {"type": "choice", "instructions": "What is the caller asking for?",
+             "criteria": {"refund": "money back", "status": "where is my order",
+                          "cancel": "stop the subscription", "other": "none of these"}}})
+answer["transcript"]   # the words the decision was made about
+```
+
+Speech goes through a small local transcriber and the transcript rides the ordinary text path, so
+everything above applies unchanged: fitted heads, calibration, conformal sets, the escalation band.
+That is the difference from the image path, where pixels bypass the heads. The transcript and the
+checkpoint that produced it come back in the response, because a decision made on words you never
+saw cannot be audited.
+
+The default transcriber is `distil-whisper/distil-small.en` (166M, English), downloaded once and
+loaded on first use, so a text-only caller never pays for it. Name any Hugging Face ASR checkpoint
+instead: `asr="openai/whisper-tiny"` (39M) for multilingual audio with `language="de"` and friends,
+`asr="UsefulSensors/moonshine-tiny"` (27M) for the smallest English front end. Everything runs on
+your machine; no audio leaves the process.
+
+`audio` may be a path, raw audio-file bytes, or a float waveform with `sampling_rate=`. Decoding a
+file needs the extra:
+
+```
+pip install "vegaml[audio]"
+```
+
 ### 73,728-token context
 
 `max_len` is 73,728 tokens, and the architecture is built for it rather than merely permitting it:
