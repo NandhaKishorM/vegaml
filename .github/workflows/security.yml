@@ -100,7 +100,7 @@ jobs:
       # No edit is needed to turn it on; the condition starts being true by itself.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ !github.event.repository.private }}
-      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+      - uses: github/codeql-action/init@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
         if: ${{ !github.event.repository.private }}
         with:
           languages: python
