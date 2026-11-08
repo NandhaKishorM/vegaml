@@ -48,8 +48,8 @@ from .ttt import TTTHead
 # MODES and label_ids are imported by name from outside this package (the bench adapter, the tests),
 # so they belong in __all__ rather than merely being present as module attributes.
 __all__ = ["load", "Vega", "TTTHead", "Band", "fetch", "default_token", "label_ids", "MODES",
-           "attach", "calibrate", "__version__"]
-__version__ = "0.15.0"
+           "attach", "calibrate", "load_policy", "fit_policy", "__version__"]
+__version__ = "0.16.0"
 
 MODES = ("auto", "engine", "ttt", "both")
 
@@ -474,6 +474,64 @@ class Vega:
         out["asr"] = self._audio.model
         return out
 
+    # ------------------------------------------------------------------ video
+    def decide_video(self, video, questions: Mapping, frames: int = 4, asr: Optional[str] = None,
+                     language: Optional[str] = None, **kw) -> Dict:
+        """The same typed interface over a clip: the sound track if it carries speech, frames if not.
+
+        The sound track is pulled out at 16 kHz and, when it is loud enough to hold speech,
+        transcribed through :meth:`decide_audio`; if the transcript holds real words the decision
+        is made on it, so heads and calibration apply as for text. Otherwise ``frames`` evenly
+        spaced frames are tiled into one picture and decided through :meth:`decide_image`, the
+        vision tower's zero-shot readout. ``out["video"]`` says which path ran and why.
+
+        ``video`` is a path or raw file bytes. Decoding needs ``vegaml[video]`` (PyAV); the frames
+        path also needs ``vegaml[vision]``. See :mod:`vegaml._video`.
+        """
+        from . import _video
+
+        started = time.perf_counter()
+        src = _video.as_source(video)
+        info = _video.probe(src)
+        wave = _video.extract_audio(src)
+        out = None
+        detail: Dict = {"duration_s": round(info["duration_s"], 3),
+                        "has_audio": bool(info["has_audio"])}
+        if _video.has_speech(wave):
+            try:
+                heard = self.decide_audio(wave, questions, asr=asr, language=language,
+                                          sampling_rate=_video.TARGET_SR, **kw)
+            except ValueError:
+                heard = None        # the transcriber heard nothing: fall through to frames
+            transcript = (heard or {}).get("transcript") or ""
+            if heard is not None and _video.has_speech(wave, transcript):
+                out = heard
+                detail.update(path="speech", transcript=transcript, asr=heard.get("asr"))
+            elif transcript:
+                detail["transcript_rejected"] = transcript
+        if out is None:
+            if not info.get("has_video", True):
+                raise ValueError("the clip has no video stream and no speech on its sound "
+                                 "track; there is nothing to decide on")
+            sampled, times = _video.sample_frames(src, frames, info["duration_s"])
+            out = self.decide_image(_video.contact_sheet(sampled), questions,
+                                    **{k: v for k, v in kw.items() if k in ("mode", "alpha", "risk")})
+            detail.update(path="frames", frame_times=[round(t, 3) for t in times],
+                          frames=len(sampled))
+        out["modality"] = "video"
+        out["video"] = detail
+        out["latency_ms"] = round(1000 * (time.perf_counter() - started), 1)
+        return out
+
+    # ------------------------------------------------------------------ policies
+    def load_policy(self, path, verify=True):
+        """A trained policy (Embedding Studio's ``.zip`` or a saved folder) installed on this model.
+
+        See :func:`vegaml.policy.load_policy`; this is that call with this model already loaded."""
+        from .policy import load_policy
+
+        return load_policy(path, model=self, verify=verify)
+
     def __repr__(self) -> str:
         return "Vega(mode=%r, heads=%d, max_len=%d)" % (
             self.mode, len(self.heads), self.engine.cfg.get("max_len", 0))
@@ -523,6 +581,30 @@ def load(repo_or_path: Optional[str] = None, **kw) -> Vega:
     Hub repository id or a local path. See :meth:`Vega.from_pretrained` for the other arguments.
     """
     return Vega.from_pretrained(repo_or_path, **kw)
+
+
+def load_policy(path, model: Optional[Vega] = None, verify=True, **load_kw):
+    """Load a trained policy: Embedding Studio's downloaded ``.zip``, or a folder saved by
+    :meth:`vegaml.policy.Policy.save`. Verified before anything is installed, then every
+    :meth:`~vegaml.policy.Policy.decide` routes each answer "auto" or "review" by itself.
+
+        policy = vegaml.load_policy("acme-policy.zip")
+        out = policy.decide("I was charged twice")
+        out["route"]                        # "auto" or "review", for the whole record
+
+    With no ``model`` the reader the policy was trained on is loaded. See :mod:`vegaml.policy`."""
+    from .policy import load_policy as _load_policy
+
+    return _load_policy(path, model=model, verify=verify, **load_kw)
+
+
+def fit_policy(model: Vega, rows, questions: Optional[Mapping] = None, **kw):
+    """Heads, calibration, review band and off-topic limit from your labelled rows, in one call,
+    as a :class:`~vegaml.policy.Policy` you can ``decide`` with and ``save``. ``rows`` may be a
+    path to a ``.csv`` or ``.jsonl``. See :func:`vegaml.policy.fit_policy`."""
+    from .policy import fit_policy as _fit_policy
+
+    return _fit_policy(model, rows, questions, **kw)
 
 
 # vegaml/calibrate.py (the legacy calibration module) shares its name with the calibrate()

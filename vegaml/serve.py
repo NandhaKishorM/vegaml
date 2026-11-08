@@ -3,6 +3,7 @@
     pip install "vegaml[serve]"
     vegaml-serve --model 4b --port 8000
     vegaml-serve --calibration calibration.json --threads 1      # fitted probabilities and a band
+    vegaml-serve --policy acme-policy.zip                        # a trained policy, verified first
 
     curl -s localhost:8000/v1/decide -H 'content-type: application/json' -d '{
         "state": "I was billed twice, refund me or I cancel.",
@@ -25,6 +26,13 @@ answers with raw published probabilities and no band, which is not what anyone w
 trouble of labelling data wants deployed. Each answer also carries an `audit` block naming the
 engine, the reader and the calibration version that produced it, because a decision nobody can
 re-run is a decision nobody can defend.
+
+--policy serves a trained policy: Embedding Studio's downloaded .zip or a folder saved by
+`vegaml.policy.Policy.save`. It is verified before the port opens (file hashes, signature, and
+that the loaded reader is the one it was trained on; see :mod:`vegaml.policy`), and the reader it
+was trained on is loaded unless --model names one. Every answer then carries ``route`` ("auto" or
+"review") and ``route_reason``, the response carries the record's ``route``, and ``questions``
+may be left out of a request to ask the policy's own.
 """
 from __future__ import annotations
 
@@ -38,7 +46,8 @@ from pydantic import BaseModel, Field
 
 class DecideRequest(BaseModel):
     state: Any
-    questions: Dict[str, Dict[str, Any]]
+    # Required unless the server holds a policy, whose own questions are then asked.
+    questions: Optional[Dict[str, Dict[str, Any]]] = None
     mode: Optional[Literal["auto", "engine", "ttt", "both"]] = None
     alpha: str = "0.1"
     views: int = Field(1, ge=1, le=3)
@@ -52,18 +61,22 @@ class BatchRequest(BaseModel):
 
 
 def create_app(model=None, model_name: Optional[str] = None, load_kw: Optional[Dict] = None,
-               calibration=None, band=None) -> FastAPI:
+               calibration=None, band=None, policy=None) -> FastAPI:
     """The FastAPI app. Pass a loaded model (tests do), or a name and the first request loads it.
 
     `calibration` is a :class:`vegaml.calibrate.Calibration` applied to every answer; `band` is a
-    :class:`vegaml.band.Band` for a review line without a full calibration.
+    :class:`vegaml.band.Band` for a review line without a full calibration. `policy` is a loaded
+    :class:`vegaml.policy.Policy`; it brings its own model and calibration and routes every answer.
     """
+    if policy is not None:
+        model, calibration = policy.model, policy.calibration
     app = FastAPI(title="vegaml", docs_url="/docs")
     app.state.model = model
     app.state.model_name = model_name
     app.state.load_kw = load_kw or {}
     app.state.calibration = calibration
     app.state.band = band
+    app.state.policy = policy
     app.state.lock = threading.Lock()
     # Checked once, on the first request that has both a model and a calibration to compare.
     app.state.checked = False
@@ -93,6 +106,9 @@ def create_app(model=None, model_name: Optional[str] = None, load_kw: Optional[D
             out["engine_sha256"] = None
         out["calibration_version"] = cal.version() if cal is not None else None
         out["heads_fitted"] = sorted(getattr(v, "heads", {}))
+        if app.state.policy is not None:
+            out["policy"] = {"source": app.state.policy.source,
+                             "verified": app.state.policy.verified.get("status")}
         return out
 
     def _version() -> str:
@@ -101,6 +117,19 @@ def create_app(model=None, model_name: Optional[str] = None, load_kw: Optional[D
 
     def _decide(req: DecideRequest) -> Dict:
         v = _model()
+        pol = app.state.policy
+        if pol is not None:
+            with app.state.lock:
+                try:
+                    out = pol.decide(req.state, req.questions, review_below=req.review_below,
+                                     alpha=req.alpha, views=req.views)
+                except (ValueError, RuntimeError) as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from e
+            out["audit"] = _audit(v)
+            return out
+        if not req.questions:
+            raise HTTPException(status_code=422, detail="questions is required unless the server "
+                                                        "was started with --policy")
         with app.state.lock:
             try:
                 out = v.decide(req.state, req.questions, mode=req.mode, alpha=req.alpha,
@@ -139,6 +168,10 @@ def create_app(model=None, model_name: Optional[str] = None, load_kw: Optional[D
                         "default": cal.band.default,
                         "questions": {q: b.get("threshold") for q, b in cal.band.questions.items()}},
                 },
+                "policy": None if app.state.policy is None else {
+                    "source": app.state.policy.source, "verified": app.state.policy.verified,
+                    "questions": app.state.policy.questions,
+                    "outbound": app.state.policy.thresholds()["outbound"]},
                 "band": None if app.state.band is None else {
                     "default": app.state.band.default,
                     "questions": {q: b.get("threshold")
@@ -170,6 +203,11 @@ def main(argv: Optional[list] = None) -> int:
                     help="int8 weights for the reader, CPU only (docs/cpu.md)")
     ap.add_argument("--calibration", default=None, metavar="FILE",
                     help="a calibration.json from `vegaml-calibrate fit`, applied to every answer")
+    ap.add_argument("--policy", default=None, metavar="ZIP_OR_DIR",
+                    help="a trained policy (Studio's .zip or a saved folder), verified before the "
+                         "port opens; every answer is routed auto or review")
+    ap.add_argument("--unsigned-ok", action="store_true",
+                    help="with --policy: serve an unsigned policy (the default refuses one)")
     ap.add_argument("--review-below", type=float, default=None, metavar="T",
                     help="route answers under this confidence to review, when no calibration "
                          "carries a band of its own")
@@ -203,12 +241,28 @@ def main(argv: Optional[list] = None) -> int:
     if args.review_below is not None:
         from .band import Band
         band = Band(default=args.review_below)
-    model = None
-    if args.preload:
+    model = policy = None
+    if args.policy:
+        if calibration is not None:
+            raise SystemExit("vegaml-serve: --policy carries its own calibration; drop --calibration")
+        import vegaml
+
+        from .policy import PolicyError, load_policy
+        if args.model:
+            model = vegaml.load(args.model, **load_kw)
+        try:
+            policy = load_policy(args.policy, model=model,
+                                 verify=True if args.unsigned_ok else "signed", **load_kw)
+        except PolicyError as e:
+            raise SystemExit("vegaml-serve: --policy refused: %s" % e) from None
+        print("vegaml-serve: policy %s, %s, questions %s"
+              % (args.policy, policy.verified.get("signed_by") or policy.verified.get("status"),
+                 ", ".join(policy.questions)))
+    elif args.preload:
         import vegaml
         model = vegaml.load(args.model, **load_kw)
     app = create_app(model=model, model_name=args.model, load_kw=load_kw,
-                     calibration=calibration, band=band)
+                     calibration=calibration, band=band, policy=policy)
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
