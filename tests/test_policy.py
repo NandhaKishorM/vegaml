@@ -368,3 +368,12 @@ def test_without_a_policy_the_server_still_needs_questions():
 
     client = TestClient(create_app(model=FakeVega(_Engine())))
     assert client.post("/v1/decide", json={"state": "x"}).status_code == 422
+
+
+def test_a_saturated_confidence_and_its_bar_print_with_enough_digits():
+    assert P._pair(0.999952, 0.999961) == ("0.99995", "0.99996")
+    assert P._pair(0.86, 0.95) == ("0.860", "0.950")
+    out = {"answers": {"q": {"prediction_set": [], "abstain": True, "confidence": 0.999952,
+                             "auto_at": 0.999961, "calibrated": True}}}
+    P.settle(out)
+    assert "0.99995 is below 0.99996" in out["answers"]["q"]["route_reason"]

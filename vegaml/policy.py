@@ -378,6 +378,16 @@ def _apply_calibration(result: Mapping, cal, stale: Mapping) -> Dict:
 
 
 # ----------------------------------------------------------------------------- the route
+def _pair(a: float, b: float) -> Tuple[str, str]:
+    """Two numbers printed with just enough digits to tell them apart. A saturated head puts the
+    confidence at 0.99995 and its bar at 0.99996, and "1.000 is below 1.000" explains nothing."""
+    for digits in range(3, 8):
+        x, y = "%.*f" % (digits, a), "%.*f" % (digits, b)
+        if x != y:
+            return x, y
+    return "%.7f" % a, "%.7f" % b
+
+
 def settle(result: Dict, review_below: Optional[float] = None,
            stale: Optional[Mapping[str, List[str]]] = None) -> Dict:
     """``abstain``, ``route`` and ``route_reason`` on every answer, and ``route`` on the record.
@@ -411,10 +421,15 @@ def settle(result: Dict, review_below: Optional[float] = None,
                     reasons.append("it cannot narrow the answer to one option (%s)"
                                    % " or ".join(str(x) for x in pset))
                 else:
-                    conf = a.get("confidence")
-                    reasons.append("confidence %s is below the bar the policy's held-out rows set "
-                                   "for an automatic answer"
-                                   % ("%.3f" % conf if isinstance(conf, (int, float)) else "unknown"))
+                    conf, bar = a.get("confidence"), a.get("auto_at")
+                    if isinstance(conf, (int, float)) and isinstance(bar, (int, float)):
+                        c, b = _pair(float(conf), float(bar))
+                        reasons.append("confidence %s is below %s, the bar the policy's held-out "
+                                       "rows set for an automatic answer" % (c, b))
+                    else:
+                        reasons.append("confidence %s is below the bar the policy's held-out rows "
+                                       "set for an automatic answer"
+                                       % ("%.3f" % conf if isinstance(conf, (int, float)) else "unknown"))
             if a.get("route") == "review" and a.get("route_reason"):
                 reasons.append("band: " + str(a["route_reason"]))
         if reasons:
@@ -508,6 +523,9 @@ class Policy:
         covered = set(self.calibration.questions) if self.calibration is not None else set()
         for qid, ans in raw["answers"].items():
             ans["calibrated"] = bool(not pixels and qid in covered and qid not in stale)
+            if ans["calibrated"]:
+                # the confidence an answer needs for its conformal set to hold it at all
+                ans["auto_at"] = round(1.0 - float(self.calibration.questions[qid]["qhat"]), 6)
         out = dict(raw, modality=modality)
         if head is not None and not pixels and head.last_residual is not None:
             r = float(head.last_residual)

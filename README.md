@@ -375,6 +375,43 @@ file needs the extra:
 pip install "vegaml[audio]"
 ```
 
+### Video
+
+*Added in 0.16.0.*
+
+```python
+answer = v.decide_video("clip.mp4", questions)
+answer["video"]        # {"path": "speech", "transcript": ...} or {"path": "frames", "frame_times": [...]}
+```
+
+A clip is split into what the engine already reads. If its sound track carries speech, the
+transcript goes through the text path, heads and calibration included, exactly as for audio;
+otherwise a few evenly spaced frames are tiled into one picture and go through the image path.
+`answer["video"]` says which path ran. Decoding is PyAV, in process, with no binary on the PATH:
+
+```
+pip install "vegaml[video]"
+```
+
+### Trained policies
+
+*Added in 0.16.0.*
+
+```python
+policy = vegaml.load_policy("acme-policy.zip")     # Embedding Studio's download, verified
+out = policy.decide("I was charged twice")
+out["route"]                                       # "auto" or "review", with a reason per answer
+```
+
+A policy is the heads, the calibration, the review band and the off-topic limit, trained on your
+own rows. Loading one checks every file's SHA-256, the Ed25519 signature Embedding Space puts on
+Studio's exports, and that the reader loaded is the one it was trained on; a changed file, a
+foreign signature or the wrong reader is refused by name. Every answer is then routed `auto` or
+`review` for one of four stated reasons: the record is off-topic, the question is not calibrated,
+the conformal set cannot settle on one option, or the policy's review line. `vegaml.fit_policy`
+trains one from a CSV and `policy.save` writes it; `vegaml-serve --policy` serves one. See
+[docs/policies.md](docs/policies.md).
+
 ### 73,728-token context
 
 `max_len` is 73,728 tokens, and the architecture is built for it rather than merely permitting it:
@@ -477,7 +514,8 @@ Each surface is one extra; none changes the core, and [docs/](docs/index.md) cov
 | Surface | Install | One line |
 | --- | --- | --- |
 | [CLI](docs/cli.md) | ships with `vegaml` | `vegaml "state" --boolean "churn=Threatens to leave?"`, JSONL batches on one load |
-| [HTTP](docs/http-api.md) | `vegaml[serve]` | `vegaml-serve`: POST /v1/decide returns exactly what decide() returns |
+| [HTTP](docs/http-api.md) | `vegaml[serve]` | `vegaml-serve`: POST /v1/decide returns exactly what decide() returns; `--policy` serves a trained policy |
+| [Policies](docs/policies.md) | ships with `vegaml` | `vegaml.load_policy("acme-policy.zip")`: verified, then every answer routed auto or review |
 | [MCP](docs/mcp.md) | `vegaml[mcp]` | `vegaml-mcp-server`: decide() as a tool an agent can gate on |
 | [Structured](docs/structured.md) | `vegaml[structured]` | a pydantic model as the question sheet and the validated answer |
 | [ONNX](docs/onnx.md) | `vegaml[onnx]` | export the engine, run it anywhere onnxruntime does |
