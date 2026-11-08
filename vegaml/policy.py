@@ -431,7 +431,12 @@ def settle(result: Dict, review_below: Optional[float] = None,
                                        "set for an automatic answer"
                                        % ("%.3f" % conf if isinstance(conf, (int, float)) else "unknown"))
             if a.get("route") == "review" and a.get("route_reason"):
-                reasons.append("band: " + str(a["route_reason"]))
+                conf, line_t = a.get("confidence"), a.get("review_threshold")
+                if isinstance(conf, (int, float)) and isinstance(line_t, (int, float)):
+                    c, t = _pair(float(conf), float(line_t))
+                    reasons.append("band: confidence %s is below the %s review line" % (c, t))
+                else:
+                    reasons.append("band: " + str(a["route_reason"]))
         if reasons:
             a["route"] = "review"
             a["route_reason"] = "; ".join(reasons)
