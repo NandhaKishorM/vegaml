@@ -377,3 +377,11 @@ def test_a_saturated_confidence_and_its_bar_print_with_enough_digits():
                              "auto_at": 0.999961, "calibrated": True}}}
     P.settle(out)
     assert "0.99995 is below 0.99996" in out["answers"]["q"]["route_reason"]
+
+
+def test_the_band_reason_prints_with_enough_digits_too():
+    out = {"answers": {"q": {"prediction_set": ["a"], "abstain": False, "confidence": 0.99981,
+                             "calibrated": True, "route": "review", "review_threshold": 0.99987,
+                             "route_reason": "confidence 1.000 is below the 1.000 review line"}}}
+    P.settle(out)
+    assert out["answers"]["q"]["route_reason"] == "band: confidence 0.9998 is below the 0.9999 review line"
