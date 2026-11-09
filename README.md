@@ -4,6 +4,25 @@
 
 # vegaml
 
+> **Cite this work.** M, N.; M, A. From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities. *Preprints* **2026**, 2026110781. [https://doi.org/10.20944/preprints202611.0781.v1](https://doi.org/10.20944/preprints202611.0781.v1)
+
+<details>
+<summary>BibTeX</summary>
+
+```bibtex
+@article{m2026laya_vega,
+  title   = {From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities},
+  author  = {M, N. and M, A.},
+  journal = {Preprints},
+  year    = {2026},
+  pages   = {2026110781},
+  doi     = {10.20944/preprints202611.0781.v1},
+  url     = {https://doi.org/10.20944/preprints202611.0781.v1}
+}
+```
+
+</details>
+
 Typed decisions from a frozen language model and a small physics engine. You give it a **state** and a
 **question whose answer type is fixed in advance**; it returns a value your code can use directly: a
 choice, a 0 to 1 score, or the probability that a statement is true. Each carries a calibrated
