@@ -460,7 +460,9 @@ class Perception:
                 self.model(input_ids=ids, attention_mask=mask, past_key_values=cache, use_cache=cache is not None)
             except StopForward:
                 pass
-        return dict(self._cap)
+        cap = self._cap
+        self._cap = {}
+        return cap
 
     @torch.inference_mode()
     def pooled(self, items, chunks=0, chunk_min_tokens=2048, prefix_min=4096, chunk_tokens=128):
@@ -525,44 +527,44 @@ class Perception:
     def _pooled_batch(self, items, chunks, chunk_min_tokens, chunk_tokens=128):
         B = len(items)
         L = max(len(it["ids"]) for it in items)
-        K = max(len(it["spans"]["options"]) for it in items)
         pad = self.tok.pad_token_id if self.tok.pad_token_id is not None else 0
         ids = torch.full((B, L), pad, dtype=torch.long)
         att = torch.zeros((B, L), dtype=torch.long)
-        nseg = 3 + K
-        seg = torch.full((B, L), B * nseg, dtype=torch.long)   # dummy bucket for unpooled tokens
         for b, it in enumerate(items):
             n = len(it["ids"])
-            ids[b, :n] = torch.from_numpy(it["ids"].astype(np.int64))
+            ids[b, :n] = torch.as_tensor(it["ids"], dtype=torch.long)
             att[b, :n] = 1
-            sp = it["spans"]
-            seg[b, sp["state"][0]:sp["state"][1]] = b * nseg + 0
-            seg[b, sp["question"][0]:sp["question"][1]] = b * nseg + 1
-            for k, (a, e) in enumerate(sp["options"]):
-                seg[b, a:e] = b * nseg + 3 + k
-            seg[b, n - 1] = b * nseg + 2
-        ids, att, seg = ids.to(self.device), att.to(self.device), seg.to(self.device).flatten()
+        ids, att = ids.to(self.device), att.to(self.device)
         # one sequence has no padding: without a mask the attention runs causal kernels instead of materialising an
         # L x L mask (8 GB at 64k tokens)
         cap = self._run(ids, None if B == 1 else att)
-        counts = torch.bincount(seg, minlength=B * nseg + 1).clamp_min(1).float()[:, None]
-        pooled = {}
-        for i in self.capture:
-            h = cap[i].float().reshape(B * L, -1)
-            sums = torch.zeros(B * nseg + 1, h.size(1), device=self.device).index_add_(0, seg, h)
-            pooled[i] = (sums / counts)[:-1].view(B, nseg, -1)
-        item = torch.stack([pooled[i][:, :3] for i in self.feature_layers], 1)             # [B, Lf, 3, d]
-        valid = torch.zeros(B, K, dtype=torch.bool, device=self.device)
-        for b, it in enumerate(items):
-            valid[b, :len(it["spans"]["options"])] = True
-        opt = torch.stack([pooled[i][:, 3:] for i in self.option_layers], 2)                # [B, K, Lo, d]
+        d = cap[self.feature_layers[0]].size(-1)
+        Lf, Lo = len(self.feature_layers), len(self.option_layers)
+        total_opts = sum(len(it["spans"]["options"]) for it in items)
+        item = torch.empty(B, Lf, 3, d, device=self.device, dtype=torch.float32)
+        opt = torch.empty(total_opts, Lo, d, device=self.device, dtype=torch.float32)
+        spans_b = [(it["spans"]["state"], it["spans"]["question"], it["spans"]["options"], len(it["ids"]) - 1)
+                   for it in items]
+        for li, i in enumerate(self.feature_layers):
+            for b, (st, qu, _, last_idx) in enumerate(spans_b):
+                hb = cap[i][b]
+                item[b, li, 0] = hb[st[0]:st[1]].float().mean(0) if st[1] > st[0] else hb.new_zeros(d)
+                item[b, li, 1] = hb[qu[0]:qu[1]].float().mean(0) if qu[1] > qu[0] else hb.new_zeros(d)
+                item[b, li, 2] = hb[last_idx].float()
+        for li, i in enumerate(self.option_layers):
+            p_idx = 0
+            for b, (_, _, opts_sp, _) in enumerate(spans_b):
+                hb = cap[i][b]
+                for a, e in opts_sp:
+                    opt[p_idx, li] = hb[a:e].float().mean(0) if e > a else hb.new_zeros(d)
+                    p_idx += 1
         c = None
         if chunks:
             hl = cap[self.feature_layers[-1]]
             cs = [self._chunk_pool(hl[b], it["spans"]["state"][0], it["spans"]["state"][1], chunks, chunk_min_tokens,
                                    chunk_tokens) for b, it in enumerate(items)]
             c = (torch.stack([x[0] for x in cs]), torch.stack([x[1] for x in cs]))
-        return item, opt[valid], c
+        return item, opt, c
 
     def _pooled_prefix(self, items, P, chunks, chunk_min_tokens, chunk_tokens=128):
         """Items sharing the same first P tokens (the prompt up to the end of the state): the prefix runs once with a
