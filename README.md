@@ -31,6 +31,8 @@ probability, a conformal answer set and an explicit abstain flag.
 **vega-U: one 14.3M engine, any frozen reader, from 0.8B to 27B · 73,728-token context · images ·
 runs on your own hardware.** No text is generated anywhere in the path.
 
+> **A policy for your own decisions.** [Embedding Studio](https://studio.embedding.in) drafts, fits and calibrates a vega policy from a description of your company and the decisions you need, then gives you a signed policy file that runs on your own machine with `vegaml.load_policy`. You can start with no labelled data and add your own rows later.
+
 ![vega-U: four readers, one byte-identical engine](assets/vega_u_benchmarks.png)
 
 <sub>The default model. Four frozen readers behind one byte-identical 14.3M engine; the readers
