@@ -4,6 +4,8 @@
 
 # vegaml
 
+> **[Studio, from Embedding Space](https://studio.embedding.in): decision models that learn on the job.** Pick your questions and get a vega model that runs on your own servers (`pip install vegaml` plus the licensed learner). It answers from day one and learns from every answer your team confirms: across Studio's 14 templates, 85% right on day one and 96% after 120 confirmed answers. Learning takes seconds on a CPU, with no GPU and no fine-tuning, and your records never leave your network. ₹99,000 or $1,188 a year per decision engine.
+
 > **Cite this work.** M, N.; M, A. From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities. *Preprints* **2026**, 2026110781. [https://doi.org/10.20944/preprints202611.0781.v1](https://doi.org/10.20944/preprints202611.0781.v1)
 
 <details>
@@ -30,8 +32,6 @@ probability, a conformal answer set and an explicit abstain flag.
 
 **vega-U: one 14.3M engine, any frozen reader, from 0.8B to 27B · 73,728-token context · images ·
 runs on your own hardware.** No text is generated anywhere in the path.
-
-> **Your own decision model, and it keeps learning: [studio.embedding.in](https://studio.embedding.in).** Studio, from Embedding Space, puts your questions on an open-source vega model that you run on your own machines (`pip install vegaml`). It answers well from the first minute and learns from every decision you confirm, and your records never leave your machines. Pick a template or write your own questions, buy, and download in seconds.
 
 ![vega-U: four readers, one byte-identical engine](assets/vega_u_benchmarks.png)
 
