@@ -31,7 +31,7 @@ probability, a conformal answer set and an explicit abstain flag.
 **vega-U: one 14.3M engine, any frozen reader, from 0.8B to 27B · 73,728-token context · images ·
 runs on your own hardware.** No text is generated anywhere in the path.
 
-> **Your own decision model, and it keeps learning: [studio.embedding.in](https://studio.embedding.in).** Studio, from Embedding Space, writes your questions into an open-source laya model that you run on your own machines. It answers like laya from the first minute and learns from every decision you confirm, and your records never leave your machines. Pick a template or write your own questions, buy, and download in seconds.
+> **Your own decision model, and it keeps learning: [studio.embedding.in](https://studio.embedding.in).** Studio, from Embedding Space, puts your questions on an open-source vega model that you run on your own machines (`pip install vegaml`). It answers well from the first minute and learns from every decision you confirm, and your records never leave your machines. Pick a template or write your own questions, buy, and download in seconds.
 
 ![vega-U: four readers, one byte-identical engine](assets/vega_u_benchmarks.png)
 
