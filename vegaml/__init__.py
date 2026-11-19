@@ -49,7 +49,7 @@ from .ttt import TTTHead
 # so they belong in __all__ rather than merely being present as module attributes.
 __all__ = ["load", "Vega", "TTTHead", "Band", "fetch", "default_token", "label_ids", "MODES",
            "attach", "calibrate", "load_policy", "fit_policy", "Learner", "__version__"]
-__version__ = "0.17.1"
+__version__ = "0.17.2"
 
 MODES = ("auto", "engine", "ttt", "both")
 

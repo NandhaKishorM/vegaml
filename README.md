@@ -4,6 +4,8 @@
 
 # vegaml
 
+<p align="center"><img src="https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega-valleys.svg" width="900" alt="How vega decides: a frozen LLM reads the message once, every answer is a valley, and a particle rolls and settles in one. Where it settles is the answer, with its probability, conformal set, abstain and unbound flags." /></p>
+
 **What vega does, all open source under Apache 2.0:**
 
 - **Text, images, audio and video.** `v.decide(text)`, `v.decide_image(img)`, `v.decide_audio(wav)` and `v.decide_video(clip)` give the same typed answers for each.
