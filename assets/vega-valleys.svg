@@ -50,7 +50,7 @@
       keySplines=".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1"><mpath href="#ride"/></animateMotion>
   </circle>
 </g>
-<!-- settled: the answer and what vega says about it -->
+<!-- settled: the answer and what the model says about it -->
 <g opacity="0">
   <animate attributeName="opacity" dur="7s" repeatCount="indefinite" keyTimes="0;0.710;0.750;0.930;0.980;1" values="0;0;1;1;0;0"/>
   <circle cx="790" cy="396" r="26" fill="none" stroke="#fb923c" stroke-width="2.5"/>
