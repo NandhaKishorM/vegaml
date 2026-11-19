@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vegaml"
-version = "0.16.5"
+version = "0.17.0"
 description = "Typed decisions from a frozen language model and a small physics engine: calibrated probabilities, conformal sets, 73k context, images, speech."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -49,6 +49,8 @@ video = ["av>=12", "pillow>=10.0"]
 dev = ["pytest>=8.0", "ruff>=0.6", 'tomli>=2.0; python_version < "3.11"']
 # `pip install vegaml[serve]` adds the HTTP server (vegaml.serve / the vegaml-serve command).
 serve = ["fastapi>=0.110", "uvicorn>=0.27"]
+# `pip install vegaml[learn]` adds the continuous learner's REST server with JWT (python -m vegaml.learn serve).
+learn = ["fastapi>=0.110", "uvicorn>=0.27", "pyjwt[crypto]>=2.8"]
 # `pip install vegaml[mlx]` runs the decision engine on Apple silicon without torch (vegaml.mlx_engine).
 mlx = ['mlx>=0.30; platform_machine == "arm64" and sys_platform == "darwin"']
 # `pip install vegaml[onnx]` adds export (vegaml.onnx_export) and the onnxruntime path; onnxscript is
@@ -73,7 +75,7 @@ Repository = "https://github.com/NandhaKishorM/vegaml"
 Issues = "https://github.com/NandhaKishorM/vegaml/issues"
 
 [tool.setuptools]
-packages = ["vegaml"]
+packages = ["vegaml", "vegaml.learn"]
 
 [tool.setuptools.package-data]
 vegaml = ["py.typed"]
@@ -92,6 +94,10 @@ extend-exclude = ["notebooks/*.ipynb"]
 select = ["E", "F", "W", "I", "B"]
 # The vendored inference modules are kept close to the training-time source so the two can be diffed.
 exclude = ["vegaml/_common.py", "vegaml/_api.py", "vegaml/_vision.py"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI declares dependencies as argument defaults, Depends(...), by design.
+"vegaml/learn/serve.py" = ["B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

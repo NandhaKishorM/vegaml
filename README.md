@@ -4,7 +4,16 @@
 
 # vegaml
 
-> **[Studio, from Embedding Space](https://studio.embedding.in): decision models that learn on the job.** Pick your questions and get a vega model that runs on your own servers (`pip install vegaml` plus the licensed learner). It answers from day one and learns from every answer your team confirms: across Studio's 14 templates, 85% right on day one and 96% after 120 confirmed answers. Learning takes seconds on a CPU, with no GPU and no fine-tuning, and your records never leave your network. Pricing at [studio.embedding.in](https://studio.embedding.in).
+**What vega does, all open source under Apache 2.0:**
+
+- **Text, images, audio and video.** `v.decide(text)`, `v.decide_image(img)`, `v.decide_audio(wav)` and `v.decide_video(clip)` give the same typed answers for each.
+- **73,728 tokens of context.** Whole contracts, threads and logs in one read.
+- **Abstain and unbound.** Every engine answer carries a calibrated probability, a conformal answer set, an `abstain` flag when it should not commit, and an `unbound` flag when the input sits far from every answer (likely off-distribution).
+- **Physics, not text generation.** Each candidate answer is a well in an energy landscape; the input becomes a particle that rolls and settles in one of them. Deterministic, constant cost, nothing generated. See [How it works](#how-it-works).
+- **Any LLM as the reader.** vega-U is one 14.3M engine over any frozen reader from 0.8B to 27B, and `vegaml.attach()` connects your own.
+- **Continuous learning, new in 0.17.** `vegaml.Learner` answers from day one and learns from every answer your team confirms, on your own machine: across 14 decision templates, 85% right on day one and 96% after 120 confirmed answers. Learning takes seconds on a CPU, with no GPU and no fine-tuning. [Guide](docs/learn.md).
+
+> **[Studio, from Embedding Space](https://studio.embedding.in)** builds the starting set for your questions and runs it for you.
 
 > **Cite this work.** M, N.; M, A. From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities. *Preprints* **2026**, 2026110781. [https://doi.org/10.20944/preprints202611.0781.v1](https://doi.org/10.20944/preprints202611.0781.v1)
 
@@ -458,6 +467,22 @@ Three, named in every question's `type` field:
 question using the old name is rejected with the valid types listed, rather than silently
 reinterpreted. Checkpoints published before the change key their conformal thresholds by the old
 name; the loader remaps them, so an older checkpoint still loads with its prediction sets intact.
+
+## Continuous learning
+
+```python
+from vegaml import Learner
+
+learner = Learner(questions, examples=rows, workdir="./vega-state")   # rows: [(text, {question: answer})]
+out = learner.decide("I was charged twice this month")
+learner.feedback("I was charged twice this month", {"team": "billing"})   # learns every 50, in the background
+```
+
+Each question gets a small head over vega's frozen features, refitted as confirmed answers arrive. A
+head answers only when it beats vega's own answer on the same rows; a batch that sharply disagrees
+with what was learned is held for you to accept or discard; one step can be undone; state is saved
+and resumed. `python -m vegaml.learn serve` runs it as a REST API with JWT (`pip install
+"vegaml[learn]"`). Full guide: [docs/learn.md](docs/learn.md).
 
 ## vega-U: one engine, any reader
 

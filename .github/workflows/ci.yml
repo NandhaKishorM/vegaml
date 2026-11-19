@@ -54,7 +54,7 @@ jobs:
           python -m pip install --upgrade pip
           # CPU-only torch keeps the job short instead of pulling CUDA wheels.
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[dev,vision]"
+          pip install -e ".[dev,vision,learn]"
       # No weights and no network in CI: these suites cover the readout maths, the packaging
       # metadata and the download allow-list. Anything needing a checkpoint is a local or release
       # concern, not a per-PR one.

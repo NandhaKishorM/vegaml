@@ -42,12 +42,17 @@ def test_every_package_relative_import_names_a_module_that_exists():
 
     # `vegaml._vision` is not an attribute of `vegaml` until something imports it, so walk the
     # package's own modules explicitly rather than relying on what happens to be loaded.
+    import importlib.util
+
     for path in sorted(PKG.rglob("*.py")):
+        # the package this file belongs to, so `from .x import y` in vegaml/learn/ means vegaml.learn.x
+        here = ".".join(("vegaml",) + path.relative_to(PKG).parent.parts)
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.ImportFrom) and node.level:
                 if not (node.module or ""):
                     continue                       # `from . import x`: the name is checked below
-                mod = importlib.import_module("vegaml." + node.module)
+                mod = importlib.import_module(
+                    importlib.util.resolve_name("." * node.level + node.module, here))
                 for alias in node.names:
                     assert hasattr(mod, alias.name), \
                         "%s imports %s from .%s, which does not define it" % (

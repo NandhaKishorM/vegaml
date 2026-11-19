@@ -48,8 +48,8 @@ from .ttt import TTTHead
 # MODES and label_ids are imported by name from outside this package (the bench adapter, the tests),
 # so they belong in __all__ rather than merely being present as module attributes.
 __all__ = ["load", "Vega", "TTTHead", "Band", "fetch", "default_token", "label_ids", "MODES",
-           "attach", "calibrate", "load_policy", "fit_policy", "__version__"]
-__version__ = "0.16.5"
+           "attach", "calibrate", "load_policy", "fit_policy", "Learner", "__version__"]
+__version__ = "0.17.0"
 
 MODES = ("auto", "engine", "ttt", "both")
 
@@ -622,3 +622,12 @@ _calibrate_fn = calibrate
 _importlib.import_module(".calibrate", __name__)       # binds the module onto the package
 calibrate = _calibrate_fn                              # and the function takes the name back
 del _calibrate_fn, _importlib
+
+
+def __getattr__(name):
+    # Learner pulls in the continuous-learning module only when it is asked for.
+    if name == "Learner":
+        from .learn import Learner
+
+        return Learner
+    raise AttributeError("module 'vegaml' has no attribute %r" % name)

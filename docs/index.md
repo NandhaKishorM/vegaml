@@ -14,6 +14,7 @@ surfaces around it.
 | [Structured](structured.md) | A pydantic model as the question sheet and the answer |
 | [Guard](guard.md) | A prompt-injection guard as a question sheet, and how to score one |
 | [Cascade](router.md) | The 0.8B answers what it can settle, the 4B gets the rest |
+| [Continuous learning](learn.md) | `vegaml.Learner`: answers from day one, learns from every answer you confirm |
 | [Policies](policies.md) | Load a trained policy (Studio's signed .zip), verified; every answer routed auto or review |
 | [Calibration](calibration.md) | Refit the probabilities on your own labels |
 | [Escalation](escalation.md) | The review band, `vegaml-calibrate`, and the drift watch |
