@@ -13,6 +13,38 @@
 - **Any LLM as the reader.** vega-U is one 14.3M engine over any frozen reader from 0.8B to 27B, and `vegaml.attach()` connects your own.
 - **Continuous learning, new in 0.17.** `vegaml.Learner` answers from day one and learns from every answer your team confirms, on your own machine: across 14 decision templates, 85% right on day one and 96% after 120 confirmed answers. Learning takes seconds on a CPU, with no GPU and no fine-tuning. [Guide](docs/learn.md).
 
+### How abstain and unbound work
+
+The input becomes a particle in a small decision space where every candidate answer is a well. Where it settles, and how deep, is the answer and its probability.
+
+- **`abstain`**: the engine declines to commit. Its threshold is calibrated so that, among the answers it does give, the error rate stays under the configured risk (10% by default).
+- **`prediction_set`**: the conformal set, every option the answer could still be at `alpha` 0.10. One option means it is sure; two or more means the input really is ambiguous.
+- **`unbound`**: the particle settled far from every well, so the input looks unlike anything the engine knows (likely off-distribution). It is reported on every answer, but on its own it is a weak signal: measured, it also fired on 71% of normal banking77 rows, so route on `abstain` and the set, or on a fitted band.
+
+### Benchmarks at a glance
+
+**Continuous learning.** 14 decision templates (31 questions), each starting from about 600 generated examples, then learning from confirmed answers; scored on 60 held-out rows per template.
+
+| | day one | after 40 confirmed answers | after 120 |
+|---|---|---|---|
+| vega, `vegaml.Learner` | 84.7% | 91.6% | **96.0%** |
+| Jev 1.14, confirmed answers written into its criteria | **89.5%** | 91.5% | 92.6% |
+
+Jev leads on day one (23 of 31 questions); they are level at 40; vega leads at 120 (12 wins, 7 losses, 12 ties). Jev cannot be taught, only prompted, and is a hosted API (364 ms a request from India).
+
+**What learning costs.** 300 answers learned in 34 s on 8 CPU threads, with no GPU (0.72 s an answer, 6.4 GB of RAM; on a GPU 40 ms and 2 GB). Fine-tuning a 421M encoder on the same 300 rows takes 89 s on a GPU with 9 GB and rewrites every weight.
+
+**Learning from a stream, November 2026** (4B reader, held-out rows):
+
+| | vega | Jev 1.14 |
+|---|---|---|
+| banking77, 924 held out, after 4,928 rows | **87.5%**, ECE 0.028, 92.5% routed auto at 91.5% precision | 79.4% as shipped (ECE 0.078), 85.7% with examples |
+| typed-decisions, 2,000 decisions, after 1,200 rows | 73.7%, ECE **0.031** | 74.7%, ECE 0.047 (level) |
+
+**vega-U across readers**, one byte-identical engine, 50,676 held-out records: 0.8B 76.5%, 4B 79.1%, 27B 81.1%, ECE 0.010 to 0.021 ([full board](#benchmarks)). **New options**: on 15 intents never trained on, the engine answers 59.7% zero-shot, which a fitted classifier cannot do at all.
+
+**Where it loses.** Zero-shot on generic public suites, a large hosted model leads. As a prompt-injection gate on real traffic (ToxicChat, 1.8% attacks), Jev untaught catches 79.1% at 0.3% refused against 73.0% at 0.7% for a fitted head. On familiar labels with enough examples, a plain classifier on the same features matches or beats the engine; the engine's edge is cold start and new options.
+
 > **[Studio, from Embedding Space](https://studio.embedding.in)** builds the starting set for your questions and runs it for you.
 
 > **Cite this work.** M, N.; M, A. From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities. *Preprints* **2026**, 2026110781. [https://doi.org/10.20944/preprints202611.0781.v1](https://doi.org/10.20944/preprints202611.0781.v1)
@@ -570,22 +602,11 @@ Each surface is one extra; none changes the core, and [docs/](docs/index.md) cov
 
 Runnable starts for each live in [examples/](examples/).
 
-## The earlier checkpoints: classic vega in two sizes
+## The earlier checkpoints
 
-Before the universal line, each size was its own checkpoint married to its backbone. They remain
-fully supported and loadable by their repository id
-(`vegaml.load("nandakishorm/vega-08b-public-intents")`) and take the same code path.
-
-| | 0.8B | 4B |
-|---|---|---|
-| backbone, frozen | Qwen3.5-0.8B | Qwen3.5-4B |
-| engine, trained | 14.3M params, 57 MB | 30.9M params, 124 MB |
-| task adapter | 0.84M params | 1.43M params |
-| per decision | **22 ms** | 28 ms |
-
-The practical trade-off is the backbone, not the engine: `Qwen/Qwen3.5-4B` is 9.34 GB against
-1.77 GB for the 0.8B and takes 61 seconds to load against 27. Pick the 4B when the machine has
-the room and the task has more than a handful of labels; pick the 0.8B when it does not.
+Before the universal line each size was its own checkpoint, married to its backbone. They are still
+loadable by repository id (`vegaml.load("nandakishorm/vega-08b-public-intents")`) and take the same code
+path; vega-U is the default and the one every current number above measures.
 
 ## Fine-tuning
 
