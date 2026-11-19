@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" width="1280" height="560" role="img"
- aria-label="How vega decides: a frozen LLM reads the message once, every answer is a valley, and a particle rolls and settles in one. Where it settles is the answer.">
+ aria-label="How it decides: a frozen LLM reads the message once, every answer is a valley, and a particle rolls and settles in one. Where it settles is the answer.">
 <defs>
   <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b1020"/><stop offset="1" stop-color="#141b2d"/></linearGradient>
   <linearGradient id="ln" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#38bdf8"/><stop offset=".5" stop-color="#a78bfa"/><stop offset="1" stop-color="#f472b6"/></linearGradient>
@@ -17,7 +17,7 @@
   .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 </style>
 <rect width="1280" height="560" rx="28" fill="url(#bg)"/>
-<text x="48" y="64" class="h">How vega decides</text>
+<text x="48" y="64" class="h">How it decides</text>
 <text x="48" y="96" class="s">A frozen LLM reads your message once. Every answer is a valley. The particle rolls and settles: where it settles is the answer.</text>
 
 <!-- the message and the reader -->
