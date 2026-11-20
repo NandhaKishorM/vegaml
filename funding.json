@@ -1,0 +1,100 @@
+{
+  "$schema": "https://fundingjson.org/schema/v1.1.0.json",
+  "version": "v1.1.0",
+  "entity": {
+    "type": "individual",
+    "role": "owner",
+    "name": "Nandakishor M",
+    "email": "nandakishor@embedding.in",
+    "phone": "",
+    "description": "AI researcher and engineer from Kerala, India. I build decision models: models that read a message once and answer typed questions (which team, how urgent, is this an attack) with calibrated probabilities, instead of generating text.\n\nI published the idea in two papers (arXiv:2503.23303 in March 2025, arXiv:2510.01237 in September 2025) with open weights, data and code. In September 2026 I released laya under Apache 2.0, and later vegaml, its physics-based decision engine. Both are built and maintained by me, and every checkpoint and benchmark run is paid for out of my own pocket.",
+    "webpageUrl": {
+      "url": "https://github.com/NandhaKishorM"
+    }
+  },
+  "projects": [
+    {
+      "guid": "vegaml",
+      "name": "vegaml",
+      "description": "vegaml turns any frozen language model into a decision model. A small physics engine (14.3M parameters) treats every candidate answer as a valley in an energy landscape; the input becomes a particle that rolls and settles in one. Where it settles is the answer, with a calibrated probability, a conformal answer set, an abstain flag when it should not commit, and an unbound flag when the input is far from every answer. Deterministic, constant cost, nothing generated.\n\nIt works over readers from 0.8B to 27B parameters, takes 73,728 tokens of context, and decides over text, images, audio and video. Since 0.17 it learns continuously: it answers from day one and learns from every answer a team confirms, on their own machine, in seconds on a CPU with no fine-tuning (85% right on day one, 96% after 120 confirmed answers, across 14 decision templates). It powers laya 0.5 by default.\n\nOpen under Apache 2.0, with a paper: From Laya to Vega (doi.org/10.20944/preprints202611.0781.v1). Funding pays for GPU time to train and benchmark engines, and maintainer time.",
+      "webpageUrl": {
+        "url": "https://github.com/NandhaKishorM/vegaml"
+      },
+      "repositoryUrl": {
+        "url": "https://github.com/NandhaKishorM/vegaml"
+      },
+      "licenses": [
+        "spdx:Apache-2.0"
+      ],
+      "tags": [
+        "artificial-intelligence",
+        "machine-learning",
+        "llm",
+        "calibration",
+        "conformal-prediction",
+        "continual-learning",
+        "multimodal",
+        "decision-model",
+        "python",
+        "research"
+      ]
+    }
+  ],
+  "funding": {
+    "channels": [
+      {
+        "guid": "github-sponsors",
+        "type": "payment-provider",
+        "address": "https://github.com/sponsors/NandhaKishorM",
+        "description": "One-time or monthly sponsorship through GitHub Sponsors."
+      },
+      {
+        "guid": "bank",
+        "type": "bank",
+        "address": "",
+        "description": "Direct bank transfer to an account in India (INR, or USD by international wire). Email for details."
+      }
+    ],
+    "plans": [
+      {
+        "guid": "maintainer-time",
+        "status": "active",
+        "name": "Maintainer time",
+        "description": "Maintainer time on vegaml: the continuous learner, the REST server, readers and releases.",
+        "amount": 2000,
+        "currency": "USD",
+        "frequency": "monthly",
+        "channels": [
+          "github-sponsors",
+          "bank"
+        ]
+      },
+      {
+        "guid": "gpu-compute",
+        "status": "active",
+        "name": "GPU compute",
+        "description": "Training engines over new readers and rerunning the benchmarks in the open.",
+        "amount": 1000,
+        "currency": "USD",
+        "frequency": "monthly",
+        "channels": [
+          "github-sponsors",
+          "bank"
+        ]
+      },
+      {
+        "guid": "goodwill",
+        "status": "active",
+        "name": "Goodwill",
+        "description": "Any amount, to keep vegaml open for everyone.",
+        "amount": 0,
+        "currency": "USD",
+        "frequency": "one-time",
+        "channels": [
+          "github-sponsors",
+          "bank"
+        ]
+      }
+    ]
+  }
+}
