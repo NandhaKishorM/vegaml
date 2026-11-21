@@ -8,7 +8,7 @@ learning from it on your own machine. Apache 2.0.
 
 A teacher for what vega is unsure of (a person, a rules engine, a large model), learned from as it answers:
 
-    desk = Escalator(learner, teacher=claude_teacher())   # or any function(text, questions) -> answers
+    desk = Escalator(learner, teacher=vllm_teacher())   # or claude_teacher(), or any function
     desk.decide(text)["answers"]["team"]["source"]          # "vega", or "teacher" while it is still learning
 
 REST API with JWT: `python -m vegaml.learn serve --questions q.json` (needs `pip install "vegaml[learn]"`).
@@ -16,7 +16,7 @@ REST API with JWT: `python -m vegaml.learn serve --questions q.json` (needs `pip
 
 from .learner import Learner, build, read_bundle, starting_store
 from .reader import Reader, label_of
-from .teacher import Escalator, claude_teacher
+from .teacher import Escalator, claude_teacher, vllm_teacher
 
 __all__ = [
     "Escalator",
@@ -24,6 +24,7 @@ __all__ = [
     "Reader",
     "build",
     "claude_teacher",
+    "vllm_teacher",
     "label_of",
     "read_bundle",
     "starting_store",

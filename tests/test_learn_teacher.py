@@ -219,3 +219,95 @@ def test_a_head_that_only_gives_the_common_answer_never_takes_over():
     X[[i for i in range(400) if y[i] == "true"], 0] += 4.0
     h = fit_head(q, X, y, ["false"] * 400)
     assert h["usable"] and h["cv_balanced"] > 0.7
+
+
+class _FakeVLLM:
+    """A local OpenAI-compatible server (what vLLM exposes) that answers every question with `reply`."""
+
+    def __init__(self, reply, content=None):
+        import http.server
+        import threading
+
+        seen = self.seen = []
+        outer = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, obj):
+                b = json.dumps(obj).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+
+            def do_GET(self):
+                self._send({"data": [{"id": "teacher-27b"}]})
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                seen.append(body)
+                text = outer.content if outer.content is not None else json.dumps(outer.reply)
+                self._send(
+                    {
+                        "choices": [{"message": {"content": text}}],
+                        "usage": {"prompt_tokens": 1500, "completion_tokens": 9},
+                    }
+                )
+
+        self.reply, self.content = reply, content
+        self.srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.url = "http://127.0.0.1:%d/v1" % self.srv.server_address[1]
+
+    def close(self):
+        self.srv.shutdown()
+
+
+def test_vllm_teacher_asks_your_own_server_with_a_constrained_answer():
+    from vegaml.learn import vllm_teacher
+
+    srv, usage = _FakeVLLM({"team": "sales"}), {}
+    try:
+        teach = vllm_teacher(srv.url, usage=usage)
+        assert teach("need a quote for 50 seats", Q) == {"team": "sales"}
+        body = srv.seen[0]
+        assert body["model"] == "teacher-27b"  # asked the server which model it serves
+        assert body["response_format"]["json_schema"]["schema"]["properties"]["team"]["enum"] == [
+            "billing",
+            "technical",
+            "sales",
+        ]
+        assert body["chat_template_kwargs"] == {"enable_thinking": False}
+        assert body["messages"][0]["role"] == "system"
+        assert usage == {"calls": 1, "prompt_tokens": 1500, "completion_tokens": 9}
+    finally:
+        srv.close()
+
+
+def test_vllm_teacher_drives_the_escalator_end_to_end():
+    from vegaml.learn import vllm_teacher
+
+    srv = _FakeVLLM({"team": "technical"})
+    try:
+        learner = Learner(Q, reader=FlaggingReader(), auto=False, every=20)
+        d = Escalator(learner, vllm_teacher(srv.url, model="teacher", extra_body={}), audit=0)
+        a = d.decide("the app crashes on login 1")["answers"]["team"]
+        assert a["source"] == "teacher" and a["answer"] == "technical"
+        assert "chat_template_kwargs" not in srv.seen[0]  # extra_body={} for non-vLLM servers
+    finally:
+        srv.close()
+
+
+def test_vllm_teacher_reads_past_thinking_and_skips_garbage():
+    from vegaml.learn import vllm_teacher
+
+    srv = _FakeVLLM(None, content='<think>billing or sales?</think>{"team": "billing"}')
+    try:
+        assert vllm_teacher(srv.url, model="t")("refund", Q) == {"team": "billing"}
+        srv.content = "not json"
+        assert vllm_teacher(srv.url, model="t")("refund", Q) == {}
+    finally:
+        srv.close()

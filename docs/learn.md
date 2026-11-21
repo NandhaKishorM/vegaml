@@ -100,6 +100,22 @@ is its probability, not a calibrated one. The learner holds a batch that sharply
 learned for someone to decide; with a teacher, the teacher is that someone, so held batches are learned
 (`accept_held=True`; False leaves them for a person).
 
+`vllm_teacher(base_url="http://localhost:8000/v1")` asks a model you serve yourself, with vLLM or any
+OpenAI-compatible server (SGLang, llama.cpp server, Ollama, LM Studio). Nothing leaves your machines and
+there is no cost per call:
+
+```python
+# vllm serve Qwen/Qwen3.8-27B --served-model-name teacher --max-model-len 8192
+from vegaml.learn import Escalator, Learner, vllm_teacher
+
+desk = Escalator(Learner(questions), teacher=vllm_teacher("http://localhost:8000/v1"))
+```
+
+The answer is constrained by a JSON schema that only admits the questions' own options. `thinking=True`
+lets a thinking model reason first; for servers other than vLLM pass `extra_body={}`. Pick a teacher
+clearly better than vega on the question: vega learns up to its teacher, not past it, and audits measure
+agreement with the teacher, so they cannot catch a teacher that is wrong (measured below).
+
 `claude_teacher(model="claude-opus-5")` asks Claude once per record, every escalated question at once,
 with a fixed system prompt and a JSON schema that only admits the questions' own options. The record
 and the escalated questions go to Anthropic's API and nothing else does. A refused record gets no
@@ -153,6 +169,23 @@ The same assistant-intent stream, run for 3,000 records:
 vega alone went from 35% to 85%, about level with the combined answer, and the share sent to the
 teacher fell from 100% to 43% and was still falling. It did not reach zero in 3,000 records. $14 of
 Opus calls.
+
+### Which teacher
+
+The same 3,000-record stream, vega with the 0.8B reader unless noted, with different teachers. The
+teacher alone is its own accuracy on the held-out records; vega learns up to it, not past it.
+
+| teacher | teacher alone | vega alone at the end | vega + teacher | sent to the teacher at the end | API cost |
+| --- | --- | --- | --- | --- | --- |
+| Claude Opus 5 (`claude_teacher()`) | about 87% | 85% | 86% | 43% | $14.09 |
+| Claude Haiku 5.5 (`claude_teacher("claude-haiku-5-5")`) | about 85% | 83% | 86% | 47% | $0.33 |
+| Qwen3.8-27B on your own GPU (`vllm_teacher()`) | 83% | 79% | 83% | 40% | none |
+| Qwen3.5-4B on your own GPU, vega with the 4B reader | 74% | 72% | 73% | 45% | none |
+| Qwen3.5-0.8B on your own GPU | 3% | 3% | 3% | 33% | none |
+
+A served 27B model teaches nearly as well as Claude with nothing leaving your machines. A teacher worse
+than vega teaches it to be wrong: the 0.8B model, right 3% of the time on 60 intents, took vega from 35%
+down to 3%, and audits could not catch it because vega agreed with its teacher.
 
 ## Saved state, more machines
 

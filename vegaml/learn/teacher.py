@@ -304,3 +304,83 @@ def claude_teacher(
         return {q: v for q, v in got.items() if q in questions}
 
     return teach
+
+
+# ---------------------------------------------------------------------- a teacher you run yourself
+def vllm_teacher(
+    base_url="http://localhost:8000/v1",
+    model=None,
+    *,
+    system=SYSTEM,
+    api_key=None,
+    thinking=False,
+    max_tokens=None,
+    timeout=120.0,
+    extra_body=None,
+    usage=None,
+):
+    """A teacher backed by a model you serve yourself: vLLM by default, or any OpenAI-compatible server
+    (SGLang, llama.cpp server, Ollama, LM Studio). Nothing leaves the machines you run it on, and there is
+    no cost per call. Start one with, for example:
+
+        vllm serve Qwen/Qwen3.8-27B --served-model-name teacher --max-model-len 8192
+
+    model: the served model name (None asks the server for its first model).
+    thinking: let a thinking model reason before answering (slower; off by default). The answer is
+        constrained by a JSON schema that only admits the questions' own options either way.
+    extra_body: extra request fields for your server; the default sends vLLM's
+        `chat_template_kwargs` to switch thinking off or on, which other servers ignore or reject, so
+        pass extra_body={} for them.
+    usage: an optional dict that collects prompt and completion tokens and the number of calls.
+
+    Pick a teacher clearly better than vega on your question: the learner learns up to its teacher, not
+    past it, and audits measure agreement with the teacher, so they cannot catch a teacher that is wrong."""
+    import urllib.request
+
+    base = base_url.rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = "Bearer " + api_key
+    if extra_body is None:
+        extra_body = {"chat_template_kwargs": {"enable_thinking": bool(thinking)}}
+    if max_tokens is None:
+        max_tokens = 4096 if thinking else 256
+    state = {"model": model}
+
+    def call(path, body=None):
+        req = urllib.request.Request(
+            base + path, data=None if body is None else json.dumps(body).encode("utf-8"), headers=headers
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (your own server)
+            return json.loads(r.read())
+
+    def teach(text, questions):
+        if state["model"] is None:
+            state["model"] = call("/models")["data"][0]["id"]
+        msg, schema = claude_prompt(text, questions)
+        body = dict(
+            model=state["model"],
+            max_tokens=max_tokens,
+            temperature=0.0,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": msg}],
+            response_format={"type": "json_schema", "json_schema": {"name": "answers", "schema": schema}},
+            **extra_body,
+        )
+        r = call("/chat/completions", body)
+        if usage is not None:
+            u = r.get("usage") or {}
+            usage["calls"] = usage.get("calls", 0) + 1
+            usage["prompt_tokens"] = usage.get("prompt_tokens", 0) + int(u.get("prompt_tokens", 0))
+            usage["completion_tokens"] = usage.get("completion_tokens", 0) + int(
+                u.get("completion_tokens", 0)
+            )
+        content = (r["choices"][0]["message"].get("content") or "").strip()
+        if "</think>" in content:  # a thinking model that put its reasoning in the content
+            content = content.split("</think>")[-1].strip()
+        try:
+            got = json.loads(content)
+        except ValueError:
+            return {}
+        return {q: v for q, v in got.items() if q in questions} if isinstance(got, dict) else {}
+
+    return teach

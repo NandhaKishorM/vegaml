@@ -17,7 +17,7 @@
 - **Abstain and unbound.** Every engine answer carries a calibrated probability, a conformal answer set, an `abstain` flag when it should not commit, and an `unbound` flag when the input sits far from every answer (likely off-distribution).
 - **Physics, not text generation.** Each candidate answer is a well in an energy landscape; the input becomes a particle that rolls and settles in one of them. Deterministic, constant cost, nothing generated. See [How it works](#how-it-works).
 - **Any LLM as the reader.** vega-U is one 14.3M engine over any frozen reader from 0.8B to 27B, and `vegaml.attach()` connects your own.
-- **A teacher for what it is unsure of, new in 0.18.** `vegaml.learn.Escalator(learner, teacher)` sends only what vega abstains on, finds unbound or is not yet sure of to a teacher (a review queue, a rules engine, or Claude via `claude_teacher()`), serves the teacher's answer and learns from it. With Claude Opus 5 as the teacher on a 3,000-record intent stream, vega alone went from 35% to 85% right and the share sent to the teacher fell from 100% to 43%; on 12 public tasks it learned the teacher's policy on 7 with no labels from anyone. [Guide](docs/learn.md#a-teacher-for-what-it-is-unsure-of).
+- **A teacher for what it is unsure of, new in 0.18.** `vegaml.learn.Escalator(learner, teacher)` sends only what vega abstains on, finds unbound or is not yet sure of to a teacher (a review queue, a rules engine, a model you serve with `vllm_teacher()`, or Claude via `claude_teacher()`), serves the teacher's answer and learns from it. With Claude Opus 5 as the teacher on a 3,000-record intent stream, vega alone went from 35% to 85% right and the share sent to the teacher fell from 100% to 43%; with Qwen3.8-27B served on your own GPU instead, 35% to 79% at no API cost. On 12 public tasks it learned the teacher's policy on 7 with no labels from anyone. [Guide](docs/learn.md#a-teacher-for-what-it-is-unsure-of).
 - **Continuous learning, new in 0.17.** `vegaml.Learner` answers from day one and learns from every answer your team confirms, on your own machine: across 14 decision templates, 85% right on day one and 96% after 120 confirmed answers. Learning takes seconds on a CPU, with no GPU and no fine-tuning. [Guide](docs/learn.md).
 
 ### How abstain and unbound work
@@ -527,9 +527,9 @@ With no one confirming answers, give it a teacher. Only what vega is unsure of g
 answer is served and learned from, and a 5% audit keeps a confident head honest:
 
 ```python
-from vegaml.learn import Escalator, claude_teacher
+from vegaml.learn import Escalator, vllm_teacher
 
-desk = Escalator(learner, teacher=claude_teacher())      # any function(text, questions) -> answers works
+desk = Escalator(learner, teacher=vllm_teacher())        # your own model; or claude_teacher(), or any function
 desk.decide("I was charged twice")["answers"]["team"]["source"]   # "teacher" until vega has learned
 ```
 
