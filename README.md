@@ -17,6 +17,7 @@
 - **Abstain and unbound.** Every engine answer carries a calibrated probability, a conformal answer set, an `abstain` flag when it should not commit, and an `unbound` flag when the input sits far from every answer (likely off-distribution).
 - **Physics, not text generation.** Each candidate answer is a well in an energy landscape; the input becomes a particle that rolls and settles in one of them. Deterministic, constant cost, nothing generated. See [How it works](#how-it-works).
 - **Any LLM as the reader.** vega-U is one 14.3M engine over any frozen reader from 0.8B to 27B, and `vegaml.attach()` connects your own.
+- **A teacher for what it is unsure of, new in 0.18.** `vegaml.learn.Escalator(learner, teacher)` sends only what vega abstains on, finds unbound or is not yet sure of to a teacher (a review queue, a rules engine, or Claude via `claude_teacher()`), serves the teacher's answer and learns from it. On 12 public tasks with Claude Opus 5 as the teacher, vega learned its policy on 7 with no labels from anyone (contract clauses 23% to 56% balanced in 400 records). [Guide](docs/learn.md#a-teacher-for-what-it-is-unsure-of).
 - **Continuous learning, new in 0.17.** `vegaml.Learner` answers from day one and learns from every answer your team confirms, on your own machine: across 14 decision templates, 85% right on day one and 96% after 120 confirmed answers. Learning takes seconds on a CPU, with no GPU and no fine-tuning. [Guide](docs/learn.md).
 
 ### How abstain and unbound work
@@ -521,6 +522,16 @@ head answers only when it beats vega's own answer on the same rows; a batch that
 with what was learned is held for you to accept or discard; one step can be undone; state is saved
 and resumed. `python -m vegaml.learn serve` runs it as a REST API with JWT (`pip install
 "vegaml[learn]"`). Full guide: [docs/learn.md](docs/learn.md).
+
+With no one confirming answers, give it a teacher. Only what vega is unsure of goes to the teacher, its
+answer is served and learned from, and a 5% audit keeps a confident head honest:
+
+```python
+from vegaml.learn import Escalator, claude_teacher
+
+desk = Escalator(learner, teacher=claude_teacher())      # any function(text, questions) -> answers works
+desk.decide("I was charged twice")["answers"]["team"]["source"]   # "teacher" until vega has learned
+```
 
 ## vega-U: one engine, any reader
 
