@@ -122,8 +122,32 @@ def fit_head(question, X, y, e, folds=5):
     chance = 1.0 / max(len(labels), 2)
     eng = (sum(e[i] == y[i] for i in scored) / len(scored)) if scored else chance
     head.engine_accuracy = eng
-    usable = cv is not None and cv > max(eng, chance)
-    return {"head": head, "cv": cv, "engine": eng, "usable": usable, "rows": len(y)}
+    # The bar is balanced accuracy (mean recall over the answers present), not accuracy: on a question
+    # where one answer is rare (a jailbreak, a fraud), a head that always gives the common answer scores
+    # high on accuracy while catching none of the rare ones, and must not take over from vega for it.
+    preds = getattr(head, "cross_val_preds", {})
+    cv_bal = _balanced([y[i] for i in preds], list(preds.values())) if preds else None
+    eng_bal = _balanced([y[i] for i in scored], [e[i] for i in scored]) if scored else None
+    k = len({y[i] for i in preds}) or 2
+    bar = max(eng_bal if eng_bal is not None else 0.0, 1.0 / k)
+    usable = cv is not None and cv > max(eng, chance) and cv_bal is not None and cv_bal > bar
+    return {
+        "head": head,
+        "cv": cv,
+        "engine": eng,
+        "cv_balanced": cv_bal,
+        "engine_balanced": eng_bal,
+        "usable": usable,
+        "rows": len(y),
+    }
+
+
+def _balanced(gold, pred):
+    """Mean recall over the answers in `gold`: always giving the commonest answer scores 1/k."""
+    by = {}
+    for g, p in zip(gold, pred, strict=True):
+        by.setdefault(g, []).append(g == p)
+    return sum(sum(v) / len(v) for v in by.values()) / len(by) if by else None
 
 
 def answer_from(question, probs):

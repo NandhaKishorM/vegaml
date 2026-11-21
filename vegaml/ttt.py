@@ -7,6 +7,7 @@ and decides with a small logistic head instead of the physics readout. The head 
 What it needs that the engine does not: labelled examples for the question you are asking. The head is
 fitted per label set, which is why it cannot be a drop-in for an arbitrary one-off question.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -53,9 +54,11 @@ class TTTHead:
         if unknown:
             # A bare KeyError here names only the offending label and leaves the caller unable to
             # tell whether they passed a bad label or constructed the head wrong.
-            raise ValueError("label(s) %s are not in this head's label set %s. Fit the head with "
-                             "label_ids(question) so the two agree."
-                             % (", ".join(repr(u) for u in unknown[:5]), self.labels))
+            raise ValueError(
+                "label(s) %s are not in this head's label set %s. Fit the head with "
+                "label_ids(question) so the two agree."
+                % (", ".join(repr(u) for u in unknown[:5]), self.labels)
+            )
         y = np.array([idx[s] for s in strs])
         self.cross_val_n = 0
         self.cross_val_rows = []
@@ -79,17 +82,18 @@ class TTTHead:
         Zp = ((Z - self.c) @ self.P) / self.s
         p = _softmax(Zp @ self.W + self.b)[0]
         out = {name: float(p[i]) for i, name in enumerate(self.labels)}
-        if allowed is not None:         # restrict to the options this case actually offers
+        if allowed is not None:  # restrict to the options this case actually offers
             keep = set(allowed)
             out = {k: v for k, v in out.items() if k in keep}
             if not out:
                 # Renormalising an empty set hands back {} and the caller's next line is
                 # max(probs, key=probs.get), which raises "max() arg is an empty sequence" and
                 # names neither the head nor the question.
-                raise ValueError("no overlap between the labels this head knows (%s) and the options "
-                                 "this question offers (%s). Refit with fit(examples, questions) for "
-                                 "the question as it is now written."
-                                 % (self.labels, sorted(keep)))
+                raise ValueError(
+                    "no overlap between the labels this head knows (%s) and the options "
+                    "this question offers (%s). Refit with fit(examples, questions) for "
+                    "the question as it is now written." % (self.labels, sorted(keep))
+                )
         tot = sum(out.values()) or 1.0
         return {k: v / tot for k, v in out.items()}
 
@@ -110,6 +114,7 @@ class TTTHead:
         y = [str(v) for v in y_labels]
         self.cross_val_n = 0
         self.cross_val_rows = []
+        self.cross_val_preds = {}
         if len(y) < 2 * folds:
             return None
         by_class = {}
@@ -117,7 +122,7 @@ class TTTHead:
             by_class.setdefault(lab, []).append(i)
         keep = sorted(lab for lab, members in by_class.items() if len(members) >= folds)
         if len(keep) < 2:
-            return None       # no class is common enough for every fold to train on one
+            return None  # no class is common enough for every fold to train on one
         rows, rows_y = [], []
         for lab in keep:
             for i in by_class[lab]:
@@ -125,8 +130,8 @@ class TTTHead:
                 rows_y.append(lab)
         rows = np.asarray(rows, dtype=int)
         where = np.empty(len(y), dtype=int)
-        where[rows] = np.arange(len(rows))          # original row index -> position within rows
-        rng = np.random.default_rng(0)              # fixed seed: the same data always gives the same number
+        where[rows] = np.arange(len(rows))  # original row index -> position within rows
+        rng = np.random.default_rng(0)  # fixed seed: the same data always gives the same number
         fold_of = np.empty(len(rows), dtype=int)
         for lab in keep:
             members = np.asarray(by_class[lab], dtype=int)
@@ -139,12 +144,14 @@ class TTTHead:
             te = np.where(fold_of == f)[0]
             tr = np.where(fold_of != f)[0]
             if len(tr) == 0 or len({rows_y[i] for i in tr}) < 2:
-                continue          # a single-class training set teaches nothing; do not score it
+                continue  # a single-class training set teaches nothing; do not score it
             h = TTTHead(self.labels, self.k, self.l2).fit(X[rows[tr]], [rows_y[i] for i in tr])
             for i in te:
                 p = h.predict(X[rows[i]])
-                hit += int(max(p, key=p.get) == rows_y[i])
+                best = max(p, key=p.get)
+                hit += int(best == rows_y[i])
                 scored_rows.append(int(rows[i]))
+                self.cross_val_preds[int(rows[i])] = best
             scored += len(te)
         self.cross_val_n = scored
         self.cross_val_rows = scored_rows

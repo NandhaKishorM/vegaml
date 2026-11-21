@@ -6,10 +6,26 @@ learning from it on your own machine. Apache 2.0.
     learner.decide(text)["answers"]["team"]["answer"]
     learner.feedback(text, {"team": "billing"})    # learns every 50 confirmed answers, in the background
 
+A teacher for what vega is unsure of (a person, a rules engine, a large model), learned from as it answers:
+
+    desk = Escalator(learner, teacher=vllm_teacher())   # or claude_teacher(), or any function
+    desk.decide(text)["answers"]["team"]["source"]          # "vega", or "teacher" while it is still learning
+
 REST API with JWT: `python -m vegaml.learn serve --questions q.json` (needs `pip install "vegaml[learn]"`).
 """
 
 from .learner import Learner, build, read_bundle, starting_store
 from .reader import Reader, label_of
+from .teacher import Escalator, claude_teacher, vllm_teacher
 
-__all__ = ["Learner", "Reader", "build", "label_of", "read_bundle", "starting_store"]
+__all__ = [
+    "Escalator",
+    "Learner",
+    "Reader",
+    "build",
+    "claude_teacher",
+    "vllm_teacher",
+    "label_of",
+    "read_bundle",
+    "starting_store",
+]
