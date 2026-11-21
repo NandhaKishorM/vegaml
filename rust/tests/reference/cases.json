@@ -1,0 +1,293 @@
+{
+ "about": "Golden-check inputs: four synthetic emails, each with boolean, score and choice questions",
+ "cases": [
+  {
+   "name": "is_invoice",
+   "state": "From: CloudHost Billing <billing@cloudhost.test>\nSubject: Invoice INV-2026-1042 — amount due €89.00\n\nYour invoice is ready. Total due: €89.00, payable by 2 November. Pay online in your account.",
+   "q": {
+    "instructions": "Is this a bill or invoice that I must pay?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "phishing",
+   "state": "From: CloudHost Billing <billing@cloudhost.test>\nSubject: Invoice INV-2026-1042 — amount due €89.00\n\nYour invoice is ready. Total due: €89.00, payable by 2 November. Pay online in your account.",
+   "q": {
+    "instructions": "Is this email trying to obtain credentials, payment or a click under false pretences?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "has_meeting",
+   "state": "From: CloudHost Billing <billing@cloudhost.test>\nSubject: Invoice INV-2026-1042 — amount due €89.00\n\nYour invoice is ready. Total due: €89.00, payable by 2 November. Pay online in your account.",
+   "q": {
+    "instructions": "Does this email propose or confirm a specific meeting time?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "urgency",
+   "state": "From: CloudHost Billing <billing@cloudhost.test>\nSubject: Invoice INV-2026-1042 — amount due €89.00\n\nYour invoice is ready. Total due: €89.00, payable by 2 November. Pay online in your account.",
+   "q": {
+    "instructions": "How time-sensitive is this email for its recipient?",
+    "options": [
+     "level 0 - not time-sensitive at all",
+     "level 1 - can wait a week or more",
+     "level 2 - should be handled within a few days",
+     "level 3 - should be handled today",
+     "level 4 - needs attention right now"
+    ],
+    "type": "score"
+   }
+  },
+  {
+   "name": "category",
+   "state": "From: CloudHost Billing <billing@cloudhost.test>\nSubject: Invoice INV-2026-1042 — amount due €89.00\n\nYour invoice is ready. Total due: €89.00, payable by 2 November. Pay online in your account.",
+   "q": {
+    "instructions": "Which category best describes this email?",
+    "options": [
+     "primary - a personal message from a real person that matters to me",
+     "personal - family, friends or private life",
+     "work - work, clients, colleagues or business",
+     "updates - automated notifications, receipts of activity, account alerts",
+     "newsletters - newsletters and mailing lists I subscribed to",
+     "promotions - marketing, offers, discounts and sales",
+     "social - social network notifications",
+     "finance - invoices, bills, payments, banking",
+     "travel - bookings, tickets, itineraries",
+     "invites - calendar invitations and meeting requests",
+     "suspected_spam - unsolicited spam or scams"
+    ],
+    "type": "choice"
+   }
+  },
+  {
+   "name": "is_invoice",
+   "state": "From: Anna Berger <anna@mycel.test>\nSubject: Quick sync on the pilot?\n\nHi! Could we talk Thursday at 15:00 about the pilot rollout? Here's my Zoom link: https://zoom.us/j/123456789. Let me know if that works.",
+   "q": {
+    "instructions": "Is this a bill or invoice that I must pay?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "phishing",
+   "state": "From: Anna Berger <anna@mycel.test>\nSubject: Quick sync on the pilot?\n\nHi! Could we talk Thursday at 15:00 about the pilot rollout? Here's my Zoom link: https://zoom.us/j/123456789. Let me know if that works.",
+   "q": {
+    "instructions": "Is this email trying to obtain credentials, payment or a click under false pretences?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "has_meeting",
+   "state": "From: Anna Berger <anna@mycel.test>\nSubject: Quick sync on the pilot?\n\nHi! Could we talk Thursday at 15:00 about the pilot rollout? Here's my Zoom link: https://zoom.us/j/123456789. Let me know if that works.",
+   "q": {
+    "instructions": "Does this email propose or confirm a specific meeting time?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "urgency",
+   "state": "From: Anna Berger <anna@mycel.test>\nSubject: Quick sync on the pilot?\n\nHi! Could we talk Thursday at 15:00 about the pilot rollout? Here's my Zoom link: https://zoom.us/j/123456789. Let me know if that works.",
+   "q": {
+    "instructions": "How time-sensitive is this email for its recipient?",
+    "options": [
+     "level 0 - not time-sensitive at all",
+     "level 1 - can wait a week or more",
+     "level 2 - should be handled within a few days",
+     "level 3 - should be handled today",
+     "level 4 - needs attention right now"
+    ],
+    "type": "score"
+   }
+  },
+  {
+   "name": "category",
+   "state": "From: Anna Berger <anna@mycel.test>\nSubject: Quick sync on the pilot?\n\nHi! Could we talk Thursday at 15:00 about the pilot rollout? Here's my Zoom link: https://zoom.us/j/123456789. Let me know if that works.",
+   "q": {
+    "instructions": "Which category best describes this email?",
+    "options": [
+     "primary - a personal message from a real person that matters to me",
+     "personal - family, friends or private life",
+     "work - work, clients, colleagues or business",
+     "updates - automated notifications, receipts of activity, account alerts",
+     "newsletters - newsletters and mailing lists I subscribed to",
+     "promotions - marketing, offers, discounts and sales",
+     "social - social network notifications",
+     "finance - invoices, bills, payments, banking",
+     "travel - bookings, tickets, itineraries",
+     "invites - calendar invitations and meeting requests",
+     "suspected_spam - unsolicited spam or scams"
+    ],
+    "type": "choice"
+   }
+  },
+  {
+   "name": "is_invoice",
+   "state": "From: Security Team <security@paypa1-verify.test>\nSubject: Your account has been suspended\n\nWe detected unusual activity. Verify your password within 24 hours at http://paypa1-verify.test/login or your account will be closed permanently.",
+   "q": {
+    "instructions": "Is this a bill or invoice that I must pay?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "phishing",
+   "state": "From: Security Team <security@paypa1-verify.test>\nSubject: Your account has been suspended\n\nWe detected unusual activity. Verify your password within 24 hours at http://paypa1-verify.test/login or your account will be closed permanently.",
+   "q": {
+    "instructions": "Is this email trying to obtain credentials, payment or a click under false pretences?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "has_meeting",
+   "state": "From: Security Team <security@paypa1-verify.test>\nSubject: Your account has been suspended\n\nWe detected unusual activity. Verify your password within 24 hours at http://paypa1-verify.test/login or your account will be closed permanently.",
+   "q": {
+    "instructions": "Does this email propose or confirm a specific meeting time?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "urgency",
+   "state": "From: Security Team <security@paypa1-verify.test>\nSubject: Your account has been suspended\n\nWe detected unusual activity. Verify your password within 24 hours at http://paypa1-verify.test/login or your account will be closed permanently.",
+   "q": {
+    "instructions": "How time-sensitive is this email for its recipient?",
+    "options": [
+     "level 0 - not time-sensitive at all",
+     "level 1 - can wait a week or more",
+     "level 2 - should be handled within a few days",
+     "level 3 - should be handled today",
+     "level 4 - needs attention right now"
+    ],
+    "type": "score"
+   }
+  },
+  {
+   "name": "category",
+   "state": "From: Security Team <security@paypa1-verify.test>\nSubject: Your account has been suspended\n\nWe detected unusual activity. Verify your password within 24 hours at http://paypa1-verify.test/login or your account will be closed permanently.",
+   "q": {
+    "instructions": "Which category best describes this email?",
+    "options": [
+     "primary - a personal message from a real person that matters to me",
+     "personal - family, friends or private life",
+     "work - work, clients, colleagues or business",
+     "updates - automated notifications, receipts of activity, account alerts",
+     "newsletters - newsletters and mailing lists I subscribed to",
+     "promotions - marketing, offers, discounts and sales",
+     "social - social network notifications",
+     "finance - invoices, bills, payments, banking",
+     "travel - bookings, tickets, itineraries",
+     "invites - calendar invitations and meeting requests",
+     "suspected_spam - unsolicited spam or scams"
+    ],
+    "type": "choice"
+   }
+  },
+  {
+   "name": "is_invoice",
+   "state": "From: The Batch <news@deeplearning.test>\nSubject: This week: small language models on laptops\n\nTop stories this week. Local AI keeps getting faster: new quantization schemes let 1-billion-parameter models run on ordinary laptops at interactive speed. Researchers released a family of embedding models that support over a hundred languages and Matryoshka truncation. A startup showed an email client that triages messages entirely on-device. In policy news, regulators published guidance on model transparency. Our tutorial of the week explains retrieval-augmented generation step by step, from chunking documents to hybrid search with BM25 and vectors. Finally, a reader asks how to evaluate calibration; we walk through expected calibration error, reliability diagrams and conformal prediction sets with worked examples. Unsubscribe or manage your preferences at any time from the link below. You are receiving this because you subscribed to The Batch.",
+   "q": {
+    "instructions": "Is this a bill or invoice that I must pay?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "phishing",
+   "state": "From: The Batch <news@deeplearning.test>\nSubject: This week: small language models on laptops\n\nTop stories this week. Local AI keeps getting faster: new quantization schemes let 1-billion-parameter models run on ordinary laptops at interactive speed. Researchers released a family of embedding models that support over a hundred languages and Matryoshka truncation. A startup showed an email client that triages messages entirely on-device. In policy news, regulators published guidance on model transparency. Our tutorial of the week explains retrieval-augmented generation step by step, from chunking documents to hybrid search with BM25 and vectors. Finally, a reader asks how to evaluate calibration; we walk through expected calibration error, reliability diagrams and conformal prediction sets with worked examples. Unsubscribe or manage your preferences at any time from the link below. You are receiving this because you subscribed to The Batch.",
+   "q": {
+    "instructions": "Is this email trying to obtain credentials, payment or a click under false pretences?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "has_meeting",
+   "state": "From: The Batch <news@deeplearning.test>\nSubject: This week: small language models on laptops\n\nTop stories this week. Local AI keeps getting faster: new quantization schemes let 1-billion-parameter models run on ordinary laptops at interactive speed. Researchers released a family of embedding models that support over a hundred languages and Matryoshka truncation. A startup showed an email client that triages messages entirely on-device. In policy news, regulators published guidance on model transparency. Our tutorial of the week explains retrieval-augmented generation step by step, from chunking documents to hybrid search with BM25 and vectors. Finally, a reader asks how to evaluate calibration; we walk through expected calibration error, reliability diagrams and conformal prediction sets with worked examples. Unsubscribe or manage your preferences at any time from the link below. You are receiving this because you subscribed to The Batch.",
+   "q": {
+    "instructions": "Does this email propose or confirm a specific meeting time?",
+    "options": [
+     "no - the statement does not hold",
+     "yes - the statement holds"
+    ],
+    "type": "boolean"
+   }
+  },
+  {
+   "name": "urgency",
+   "state": "From: The Batch <news@deeplearning.test>\nSubject: This week: small language models on laptops\n\nTop stories this week. Local AI keeps getting faster: new quantization schemes let 1-billion-parameter models run on ordinary laptops at interactive speed. Researchers released a family of embedding models that support over a hundred languages and Matryoshka truncation. A startup showed an email client that triages messages entirely on-device. In policy news, regulators published guidance on model transparency. Our tutorial of the week explains retrieval-augmented generation step by step, from chunking documents to hybrid search with BM25 and vectors. Finally, a reader asks how to evaluate calibration; we walk through expected calibration error, reliability diagrams and conformal prediction sets with worked examples. Unsubscribe or manage your preferences at any time from the link below. You are receiving this because you subscribed to The Batch.",
+   "q": {
+    "instructions": "How time-sensitive is this email for its recipient?",
+    "options": [
+     "level 0 - not time-sensitive at all",
+     "level 1 - can wait a week or more",
+     "level 2 - should be handled within a few days",
+     "level 3 - should be handled today",
+     "level 4 - needs attention right now"
+    ],
+    "type": "score"
+   }
+  },
+  {
+   "name": "category",
+   "state": "From: The Batch <news@deeplearning.test>\nSubject: This week: small language models on laptops\n\nTop stories this week. Local AI keeps getting faster: new quantization schemes let 1-billion-parameter models run on ordinary laptops at interactive speed. Researchers released a family of embedding models that support over a hundred languages and Matryoshka truncation. A startup showed an email client that triages messages entirely on-device. In policy news, regulators published guidance on model transparency. Our tutorial of the week explains retrieval-augmented generation step by step, from chunking documents to hybrid search with BM25 and vectors. Finally, a reader asks how to evaluate calibration; we walk through expected calibration error, reliability diagrams and conformal prediction sets with worked examples. Unsubscribe or manage your preferences at any time from the link below. You are receiving this because you subscribed to The Batch.",
+   "q": {
+    "instructions": "Which category best describes this email?",
+    "options": [
+     "primary - a personal message from a real person that matters to me",
+     "personal - family, friends or private life",
+     "work - work, clients, colleagues or business",
+     "updates - automated notifications, receipts of activity, account alerts",
+     "newsletters - newsletters and mailing lists I subscribed to",
+     "promotions - marketing, offers, discounts and sales",
+     "social - social network notifications",
+     "finance - invoices, bills, payments, banking",
+     "travel - bookings, tickets, itineraries",
+     "invites - calendar invitations and meeting requests",
+     "suspected_spam - unsolicited spam or scams"
+    ],
+    "type": "choice"
+   }
+  }
+ ]
+}
