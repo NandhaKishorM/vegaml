@@ -132,17 +132,33 @@ def test_an_unusable_teacher_answer_is_skipped():
 
 
 def test_audits_raise_the_line_when_a_confident_head_stops_agreeing():
-    learner, d = desk(audit=0.5, min_audits=5, window=10, step=0.05, seed=1)
+    learner, d = desk(audit=0.3, min_checked=20, seed=1)
     for text, _ in stream(300, 6):  # learn the policy until the head answers alone
         d.decide(text)
-    assert d.report()["teacher_share_recent"] < 0.7
+    assert d.report()["teacher_share_recent"] < 0.6
     calm = d.line["team"]
-    d.teacher = Teacher(flip=True)  # the policy changes; only audits can notice
-    for text, _ in stream(60, 7):
+    d.teacher = Teacher(flip=True)  # the policy changes; only checks can notice
+    for text, _ in stream(120, 7):
         d.decide(text)
     r = d.report()
     assert r["line"]["team"] > calm
     assert r["audit_agreement"]["team"] < 0.95
+
+
+def test_the_line_comes_back_down_once_vega_agrees_again():
+    # a lockout would leave the line at the top for good once everything goes to the teacher
+    learner, d = desk(audit=0.3, min_checked=20, seed=2)
+    d.teacher = Teacher(flip=True)
+    for text, _ in stream(150, 8):  # learns the flipped policy first
+        d.decide(text)
+    d.teacher = Teacher()  # then the policy changes back
+    for text, _ in stream(150, 9):
+        d.decide(text)
+    high = d.line["team"]
+    for text, _ in stream(400, 10):  # relearns it; its confident answers agree again
+        d.decide(text)
+    assert d.line["team"] < high or d.line["team"] < 0.9
+    assert d.report()["teacher_share_recent"] < 0.6
 
 
 def test_claude_prompt_lists_every_option_and_constrains_the_answer():

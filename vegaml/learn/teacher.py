@@ -13,10 +13,15 @@ the share that needs the teacher falls as vega learns.
 Who goes to the teacher:
   * vega's engine abstained, or the record is unbound (outside what vega has seen);
   * a fitted head answered below the question's line (heads carry no abstain flag of their own);
-  * a small random share of everything else, as an audit. Audits are how trust is earned: while vega's
-    answers agree with the teacher's less often than `trust`, the line rises and more goes to the
-    teacher; once they agree, it falls back. A head is never trusted on its confidence alone, because
-    a head's confidence is its probability, not a calibrated one.
+  * a small random share of everything else, as an audit.
+
+Where the line sits is measured, not guessed. Every head answer the teacher also answered (the ones
+below the line, and the audits above it) is kept with its confidence and whether the two agreed. The
+line is the lowest confidence at which vega's answers above it agree with the teacher at least
+`trust` of the time; with too few checks to say, it stays where it is. As vega learns, its confident
+answers start to agree and the line comes down by itself; if the policy changes, audits catch the
+disagreement and the line goes back up. A head is never trusted on its confidence alone, because a
+head's confidence is its probability, not a calibrated one.
 """
 
 import collections
@@ -36,28 +41,36 @@ class Escalator:
         line=0.8,
         audit=0.05,
         trust=0.95,
-        window=50,
-        min_audits=10,
-        step=0.02,
+        window=300,
+        min_checked=30,
         max_line=0.995,
         on_engine=("abstain", "unbound"),
+        accept_held=True,
         seed=0,
     ):
         """learner: a vegaml.learn.Learner. teacher: function(text, {question id: question}) returning
         {question id: answer}, each answer written as you would write feedback (an option name, true/false,
         a level); a question it cannot answer may be left out, and returning None or raising means no
         answer at all (vega's answer is served and nothing is learned).
-        line: the confidence a head answer needs to skip the teacher, per question as it adapts.
-        audit: the share of answers vega was sure of that still go to the teacher, to measure it.
-        trust: the agreement with the teacher, over the last `window` audits, that lets the line fall;
-            below it the line rises by `step` per audit, up to `max_line`.
-        on_engine: the engine flags that send an answer to the teacher."""
+        line: the confidence a head answer needs to skip the teacher, to start with; it then follows the
+            measurements, per question.
+        audit: the share of answers vega was sure of that still go to the teacher, to keep measuring.
+        trust: how often vega's answers above the line must agree with the teacher's.
+        window: how many teacher-checked head answers per question the measurement keeps.
+        min_checked: the fewest checked answers above a line before that line can be chosen.
+        max_line: the line when no confidence has earned trust yet (only audits skip the teacher above it,
+            so the measuring never stops).
+        on_engine: the engine flags that send an answer to the teacher.
+        accept_held: the learner holds a batch that sharply disagrees with what it learned (a broken feed,
+            or a real change of policy) for someone to decide. With a teacher, the teacher is that someone,
+            so held batches are learned (and counted in the report); False leaves them for a person."""
         self.learner, self.teacher = learner, teacher
         self.base_line, self.audit, self.trust = float(line), float(audit), float(trust)
-        self.window, self.min_audits, self.step, self.max_line = int(window), int(min_audits), step, max_line
-        self.on_engine = tuple(on_engine)
+        self.window, self.min_checked, self.max_line = int(window), int(min_checked), float(max_line)
+        self.on_engine, self.accept_held = tuple(on_engine), bool(accept_held)
         self.line = {q: float(line) for q in learner.questions}
-        self.agree = {q: collections.deque(maxlen=self.window) for q in learner.questions}
+        self.checked = {q: collections.deque(maxlen=self.window) for q in learner.questions}
+        self.agree = {q: collections.deque(maxlen=self.window) for q in learner.questions}  # audits only
         self._rng = random.Random(seed)
         self._lock = threading.Lock()
         self._recent = collections.deque(maxlen=100)
@@ -110,8 +123,10 @@ class Escalator:
                 self.counts["teacher_unusable"] += 1
                 continue
             mine = label_of(self.learner.questions[q], a["answer"])
+            if a.get("readout") == "head":
+                self._checked(q, float(a.get("confidence", 0.0)), mine == lab)
             if ask[q] == "audit":
-                self._audited(q, mine == lab)
+                self.agree[q].append(mine == lab)
             a["vega_answer"] = a["answer"]
             a["answer"] = _written(self.learner.questions[q], lab)
             a["source"] = "teacher"
@@ -123,6 +138,10 @@ class Escalator:
                 and self.learner.pending() >= self.learner.every
             ):
                 self.learner.step()
+            if self.accept_held:
+                for q in list(self.learner.held()):
+                    self.learner.accept(q)
+                    self.counts["held_accepted"] += 1
         with self._lock:
             self.counts["decisions"] += 1
             self.counts["teacher_calls"] += bool(ask)
@@ -132,16 +151,24 @@ class Escalator:
         out["teacher_called"] = bool(ask)
         return out
 
-    def _audited(self, q, agreed):
-        d = self.agree[q]
-        d.append(bool(agreed))
-        if len(d) < self.min_audits:
+    def _checked(self, q, conf, agreed):
+        """Record one head answer the teacher also answered, and move the line to what the checks
+        support: the lowest confidence above which vega agreed with the teacher at least `trust` of the
+        time, over at least `min_checked` answers. Below that much evidence the line does not move."""
+        d = self.checked[q]
+        d.append((conf, bool(agreed)))
+        if len(d) < self.min_checked:
             return
-        rate = sum(d) / len(d)
-        if rate < self.trust:
-            self.line[q] = min(self.max_line, self.line[q] + self.step)
-        else:
-            self.line[q] = max(self.base_line, self.line[q] - self.step)
+        pts = sorted(d, key=lambda x: -x[0])
+        best, hit = None, 0
+        for i, (c, ok) in enumerate(pts, 1):
+            hit += ok
+            if i >= self.min_checked and hit / i >= self.trust:
+                best = c
+        if best is not None:
+            self.line[q] = min(self.max_line, best)
+        elif sum(ok for _, ok in pts[: self.min_checked]) / self.min_checked < self.trust:
+            self.line[q] = self.max_line  # even its most confident answers disagree: back to the teacher
 
     def report(self):
         """How much the teacher is still needed: overall, over the last 100 records, and per question the
@@ -157,9 +184,11 @@ class Escalator:
             "teacher_share_recent": (sum(recent) / len(recent)) if recent else None,
             "escalated": {k[len("escalated_") :]: v for k, v in c.items() if k.startswith("escalated_")},
             "teacher_errors": c.get("teacher_errors", 0),
+            "held_accepted": c.get("held_accepted", 0),
             "line": dict(self.line),
             "audit_agreement": {q: (sum(d) / len(d) if d else None) for q, d in self.agree.items()},
             "audits": {q: len(d) for q, d in self.agree.items()},
+            "checked": {q: len(d) for q, d in self.checked.items()},
         }
 
 
