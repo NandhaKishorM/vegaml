@@ -8,12 +8,14 @@ import io
 import json
 import random
 
-import httpx
-import numpy as np
 import pytest
+
+import numpy as np
 from test_learn_teacher import WORDS, FlaggingReader, stream, truth
 
 from vegaml.learn import Escalator, Learner, Record, as_record, claude_teacher, window
+
+httpx = pytest.importorskip("httpx")  # the proxy extra: vegaml[proxy]
 
 PIL = pytest.importorskip("PIL")
 from PIL import Image  # noqa: E402

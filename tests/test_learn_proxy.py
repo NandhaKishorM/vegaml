@@ -4,8 +4,9 @@ transport), so nothing downloads and nothing is sent anywhere."""
 
 import json
 
-import httpx
 import pytest
+
+httpx = pytest.importorskip("httpx")  # the proxy extra: vegaml[proxy]
 
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
