@@ -194,6 +194,19 @@ class VegaVision:
         return {"answers": answers, "latency_ms": round(1000 * (time.time() - t0), 1), "n_tokens": n_tok,
                 "views": 1}
 
+    @torch.no_grad()
+    def features(self, text, questions, image):
+        """[len(questions), d] float32: pooled features of a picture with the words beside it, laid out like
+        Perception's text features (per feature layer: state, question, final token), so a fitted head reads
+        them the same way. Pictures and text are separate learners: the two are not comparable."""
+        qs = [self.d._internal(questions[k]) for k in questions]
+        feats, _, _, _ = self._features(_with_text(text), qs, _as_rgb_image(image))
+        return torch.stack(feats).reshape(len(qs), -1).float().cpu().numpy()
+
+    def decide_image_text(self, text, questions, image, **kw):
+        """Answer questions about a picture with the words beside it (a caption, a message, a chat)."""
+        return self._decide(_with_text(text), questions, image=_as_rgb_image(image), **kw)
+
     def decide_image(self, image, questions, **kw):
         """Answer questions about a picture.
 
@@ -203,6 +216,13 @@ class VegaVision:
 
     def decide_text(self, text, questions, **kw):
         return self._decide(self.dc.serialize_state(text), questions, **kw)
+
+
+def _with_text(text):
+    """The state for a picture with words beside it: the image first, then the words (cut to 4,000
+    characters so the image always fits)."""
+    text = (text or "").strip()
+    return VISION_STATE + ("\n" + text[:4000] if text else "")
 
 
 def _as_rgb_image(image):

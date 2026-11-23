@@ -311,3 +311,66 @@ def test_vllm_teacher_reads_past_thinking_and_skips_garbage():
         assert vllm_teacher(srv.url, model="t")("refund", Q) == {}
     finally:
         srv.close()
+
+
+def test_each_question_can_have_its_own_trust():
+    """A low-stakes label earns its line sooner than a safety flag: same checks, two bars."""
+    qs = {"topic": Q["team"], "unsafe": {"type": "boolean", "instructions": "Unsafe?"}}
+    desk = Escalator(types.SimpleNamespace(questions=qs), teacher=None, trust={"topic": 0.8}, min_checked=30)
+    assert desk.trust == {"topic": 0.8, "unsafe": 0.95}
+    rng = random.Random(3)
+    for _ in range(200):  # vega agrees with the teacher about 88% of the time, at every confidence
+        c, ok = rng.uniform(0.5, 1.0), rng.random() < 0.88
+        desk._checked("topic", c, ok)
+        desk._checked("unsafe", c, ok)
+    assert desk.line["topic"] < 0.9  # 88% clears a bar of 80%
+    assert desk.line["unsafe"] == desk.max_line  # and never clears 95%
+    desk.set_trust({"unsafe": 0.85})  # recomputed from the checks already measured
+    assert desk.line["unsafe"] < 0.9
+    saved = desk.state()
+    again = Escalator(types.SimpleNamespace(questions=qs), teacher=None)
+    again.load_state(saved)
+    assert again.trust == {"topic": 0.8, "unsafe": 0.85} and again.line == desk.line
+    for bad in ({"nope": 0.9}, {"topic": 1.0}, {"topic": 0.3}):
+        try:
+            desk.set_trust(bad)
+        except (KeyError, ValueError):
+            continue
+        raise AssertionError("accepted %r" % (bad,))
+
+
+def test_trust_is_earned_before_a_head_answers_alone():
+    """A head that has never been checked does not answer alone, however confident it is; a set line still
+    can be given for the old behaviour."""
+    desk = Escalator(types.SimpleNamespace(questions=Q), teacher=None)
+    sure = {"readout": "head", "confidence": 0.99}
+    assert desk.line["team"] == desk.max_line and desk._why("team", sure) == "below line"
+    for _ in range(40):  # checked and agreeing at that confidence: the line comes down to it
+        desk._checked("team", 0.99, True)
+    assert desk._why("team", sure) is None
+    old = Escalator(types.SimpleNamespace(questions=Q), teacher=None, line=0.8)
+    assert old._why("team", sure) is None
+
+
+class ConfidentReader(FlaggingReader):
+    """vega's own answer is billing, confidently and with no flag: what an untaught engine does on a record
+    unlike anything it has seen (a bare name, a one-word reply)."""
+
+    def engine_answers(self, text, questions):
+        a = super().engine_answers(text, questions)
+        for v in a.values():
+            v.update(unbound=False, abstain=False, confidence=0.9)
+        return a
+
+
+def test_an_unflagged_confident_engine_is_checked_before_it_is_trusted():
+    L = Learner(Q, [], reader=ConfidentReader(), auto=False, every=25)
+    desk = Escalator(L, Teacher(), audit=0.0)
+    rows = stream(40, 9)
+    served = [desk.decide(t)["answers"]["team"] for t, _ in rows]
+    # vega's own (engine) answers are never served on unearned trust; what vega serves is a fitted head's
+    assert not any(a["source"] == "vega" and a["readout"] == "engine" for a in served)
+    assert all(a["answer"] == gold for a, (_, gold) in zip(served, rows, strict=True))
+    assert desk.engine_line["team"] == desk.max_line  # its confident answers disagreed: still checked
+    old = Escalator(Learner(Q, [], reader=ConfidentReader(), auto=False), Teacher(), audit=0.0, engine_line=0)
+    assert old.decide(stream(1, 9)[0][0])["answers"]["team"]["source"] == "vega"
