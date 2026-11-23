@@ -8,9 +8,8 @@ import io
 import json
 import random
 
-import pytest
-
 import numpy as np
+import pytest
 from test_learn_teacher import WORDS, FlaggingReader, stream, truth
 
 from vegaml.learn import Escalator, Learner, Record, as_record, claude_teacher, window
