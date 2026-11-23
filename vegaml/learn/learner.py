@@ -22,6 +22,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import math
 import os
 import queue
 import threading
@@ -31,12 +32,16 @@ import zipfile
 import numpy as np
 
 from .reader import Reader, label_of
+from .records import DEFAULT_BUDGET, Record, as_record
 
 FORMAT = "vega-learn/1"
 
 
-def _key(text):
-    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+def _key(item):
+    """The cache key of what vega reads: a text, or a picture record (its own content hash)."""
+    if isinstance(item, Record):
+        return item.key
+    return hashlib.sha1(item.encode("utf-8")).hexdigest()
 
 
 class Store:
@@ -49,16 +54,41 @@ class Store:
         self.y = {q: [] for q in qids}
         self.e = {q: [] for q in qids}
         self.src = {q: [] for q in qids}
+        self.k = {q: [] for q in qids}  # what each row was read from ("" when unknown: an old bundle)
 
-    def add(self, qid, X, y, e, src):
+    def add(self, qid, X, y, e, src, keys=None):
+        """Append rows. With `keys`, a row for a record already in the store replaces it: a corrected
+        answer takes the place of the one it corrects (newest wins, whether that was a starting-set row or
+        an earlier answer of yours), so the two never pull the head opposite ways."""
         X = np.asarray(X, np.float16)
+        y, e = list(y), list(e)
+        keys = [""] * len(y) if keys is None else [str(k or "") for k in keys]
+        if keys and any(keys):
+            last = {}
+            for i, k in enumerate(keys):
+                if k:
+                    last[k] = i
+            keep_new = [i for i, k in enumerate(keys) if not k or last[k] == i]  # within the batch, last wins
+            if len(keep_new) < len(keys):
+                X, y, e, keys = X[keep_new], [y[i] for i in keep_new], [e[i] for i in keep_new], [
+                    keys[i] for i in keep_new
+                ]
+            replaced = set(last)
+            keep = [i for i, k in enumerate(self.k[qid]) if not k or k not in replaced]
+            if len(keep) < len(self.k[qid]):
+                self.X[qid] = self.X[qid][keep]
+                self.y[qid] = [self.y[qid][i] for i in keep]
+                self.e[qid] = [self.e[qid][i] for i in keep]
+                self.src[qid] = [self.src[qid][i] for i in keep]
+                self.k[qid] = [self.k[qid][i] for i in keep]
         if self.X[qid].shape[1] == 0 and len(self.X[qid]) == 0:
             self.X[qid] = np.zeros((0, X.shape[1]), np.float16)
             self.d = X.shape[1]
         self.X[qid] = np.concatenate([self.X[qid], X])  # a new array: the previous one stays valid for undo
-        self.y[qid] = self.y[qid] + list(y)
-        self.e[qid] = self.e[qid] + list(e)
+        self.y[qid] = self.y[qid] + y
+        self.e[qid] = self.e[qid] + e
         self.src[qid] = self.src[qid] + [src] * len(y)
+        self.k[qid] = self.k[qid] + keys
 
     def rows(self, qid, phase_out=True, max_rows=5000):
         """Indices to fit on: the starting set gives way one for one to the customer's own rows, newest
@@ -78,7 +108,7 @@ class Store:
 
     def copy(self):
         c = Store(list(self.X), self.d)
-        c.X, c.y, c.e, c.src = dict(self.X), dict(self.y), dict(self.e), dict(self.src)
+        c.X, c.y, c.e, c.src, c.k = dict(self.X), dict(self.y), dict(self.e), dict(self.src), dict(self.k)
         return c
 
     def dump(self):
@@ -88,6 +118,7 @@ class Store:
             arr["y/" + q] = np.array(self.y[q], dtype=np.str_)
             arr["e/" + q] = np.array(self.e[q], dtype=np.str_)
             arr["s/" + q] = np.array(self.src[q], dtype=np.str_)
+            arr["k/" + q] = np.array(self.k[q], dtype=np.str_)
         buf = io.BytesIO()
         np.savez(buf, **arr)
         return buf.getvalue()
@@ -104,6 +135,7 @@ class Store:
             s.y[q] = [str(v) for v in z["y/" + q]]
             s.e[q] = [str(v) for v in z["e/" + q]]
             s.src[q] = [str(v) for v in z["s/" + q]] if "s/" + q in z.files else ["start"] * len(s.y[q])
+            s.k[q] = [str(v) for v in z["k/" + q]] if "k/" + q in z.files else [""] * len(s.y[q])
         return s
 
 
@@ -167,6 +199,56 @@ def answer_from(question, probs):
         a["choice"] = best
         a["answer"] = best
     return a
+
+
+def temper(probs, temperature):
+    """A head's probabilities with its fitted temperature applied (logits divided by it): T > 1 softens an
+    over-confident head, T < 1 sharpens an under-confident one. None or 1 leaves them as they are."""
+    if not temperature or abs(float(temperature) - 1.0) < 1e-9:
+        return probs
+    t = float(temperature)
+    logs = {k: math.log(max(float(v), 1e-12)) / t for k, v in probs.items()}
+    m = max(logs.values())
+    e = {k: math.exp(v - m) for k, v in logs.items()}
+    z = sum(e.values())
+    return {k: v / z for k, v in e.items()}
+
+
+def _nll(rows, temperature):
+    return -sum(math.log(max(temper(p, temperature)[y], 1e-12)) for p, y in rows) / len(rows)
+
+
+def fit_temperature(rows):
+    """The temperature that minimises the negative log-likelihood of the right answers.
+    rows: [(probs, label)]."""
+    grid = [0.25 * 1.08**i for i in range(60)]  # 0.25 to about 24
+    return min(grid, key=lambda t: _nll(rows, t))
+
+
+def calibration_error(confs, right, bins=10):
+    """Expected calibration error: the gap between confidence and accuracy, averaged over confidence bins
+    weighted by how many answers fall in each."""
+    n, total = len(confs), 0.0
+    for b in range(bins):
+        lo, hi = b / bins, (b + 1) / bins
+        idx = [i for i, c in enumerate(confs) if lo < c <= hi or (b == 0 and c == 0)]
+        if idx:
+            conf = sum(confs[i] for i in idx) / len(idx)
+            acc = sum(right[i] for i in idx) / len(idx)
+            total += len(idx) / n * abs(conf - acc)
+    return total
+
+
+def start_line(confs, right, trust=0.95, min_rows=30):
+    """The lowest confidence above which answers were right at least `trust` of the time, over at least
+    `min_rows` answers; None when no line reaches it."""
+    pts = sorted(zip(confs, right, strict=True), key=lambda x: -x[0])
+    best, hit = None, 0
+    for i, (c, ok) in enumerate(pts, 1):
+        hit += ok
+        if i >= min_rows and hit / i >= trust:
+            best = c
+    return best
 
 
 def engine_answer(question, a):
@@ -244,7 +326,14 @@ def starting_store(reader, questions, rows, progress=None):
         for qi, q in enumerate(qids):
             idx = [i for i, (_, lab) in enumerate(clean) if q in lab]
             if idx:
-                store.add(q, feats[idx, qi], [clean[i][1][q] for i in idx], [eng[i][q] for i in idx], "start")
+                store.add(
+                    q,
+                    feats[idx, qi],
+                    [clean[i][1][q] for i in idx],
+                    [eng[i][q] for i in idx],
+                    "start",
+                    keys=[_key(texts[i]) for i in idx],
+                )
     report = {}
     for q in qids:
         idx = store.rows(q, phase_out=False)
@@ -266,16 +355,20 @@ def starting_store(reader, questions, rows, progress=None):
     return store, report
 
 
-def bundle_bytes(reader, questions, store, name=None):
-    """learn.json and start.npz for a store: what a Learner(bundle=...) starts from."""
+def bundle_bytes(reader, questions, store, name=None, modality="text", calibration=None):
+    """learn.json and start.npz for a store: what a Learner(bundle=...) starts from. `calibration`, when
+    given, travels with it and is applied by the learner that loads it."""
     meta = {
         "format": FORMAT,
         "name": name,
+        "modality": modality,
         "fingerprint": reader.fingerprint(),
         "questions": questions,
         "built_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "start": {q: len(store.y[q]) for q in questions},
     }
+    if calibration:
+        meta["calibration"] = calibration
     return json.dumps(meta, indent=1, ensure_ascii=False).encode("utf-8"), store.dump()
 
 
@@ -306,6 +399,12 @@ class Learner:
         follow=0,
         reader=None,
         on_event=None,
+        modality="text",
+        context="full",
+        budget=DEFAULT_BUDGET,
+        frames=4,
+        asr=None,
+        language=None,
     ):
         """questions: vegaml questions, {id: {"type": "choice" | "boolean" | "score", "instructions",
         "criteria"}}.
@@ -321,8 +420,20 @@ class Learner:
         far is
             held for review (a broken feed, or a real change of policy that someone should confirm).
         follow: seconds between reloads of the newest state in workdir, for a read-only copy (0: off).
-            A follower never learns; one writer learns and saves, any number of followers answer."""
+            A follower never learns; one writer learns and saves, any number of followers answer.
+        modality: what this learner reads. "text" takes text, conversations, audio (its transcript) and
+            clips with speech; "image" takes pictures (with any words beside them) and silent clips (their
+            frames). The two are read through different paths, so they are separate learners. A record is
+            a string, or a dict as vegaml.learn.as_record describes (text / image / images / audio / video,
+            or turns of them).
+        context / budget: what is read of a long conversation ("full", "recent" or "last") within `budget`
+            characters, keeping the newest turns. frames / asr / language: how clips are sampled and
+            recordings transcribed."""
         self.reader = reader or Reader.load(model, device)
+        if modality not in ("text", "image"):
+            raise ValueError("modality is text or image, not %r" % (modality,))
+        self.modality = modality
+        self.read_kw = dict(context=context, budget=budget, frames=frames, asr=asr, language=language)
         self.every, self.max_drop, self.phase_out, self.max_rows, self.keep = (
             int(every),
             max_drop,
@@ -331,6 +442,9 @@ class Learner:
             keep,
         )
         self.workdir = None if workdir is None else os.path.expanduser(os.fspath(workdir))
+        #: per question: {"temperature", "start_line", ...} from calibrate() or the bundle, applied by
+        #: decide()
+        self.calibration = {}
         self.on_event = on_event or (lambda event: None)
         self.follow = float(follow or 0)
         self.report = None
@@ -346,23 +460,29 @@ class Learner:
                     % (meta["fingerprint"], self.reader.fingerprint())
                 )
             self.questions = meta["questions"]
+            self.modality = meta.get("modality", "text")
+            self.calibration = dict(meta.get("calibration") or {})
             source = hashlib.sha256(files["vega/start.npz"]).hexdigest()
             start = files["vega/start.npz"]
         else:
             if not questions:
                 raise ValueError("give the questions to answer, or a bundle to start from")
             self.questions = json.loads(json.dumps(questions))
-            examples = [(t, dict(lab)) for t, lab in (examples or [])]
+            examples = [(self._item(t), dict(lab)) for t, lab in (examples or [])]
             source = hashlib.sha256(
-                json.dumps(examples, sort_keys=True, ensure_ascii=False).encode("utf-8")
+                json.dumps(
+                    [(t if isinstance(t, str) else t.key, lab) for t, lab in examples],
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ).encode("utf-8")
             ).hexdigest()
         self.meta = {"format": FORMAT, "fingerprint": self.reader.fingerprint(), "questions": self.questions}
         #: what saved state must match to be resumed: the questions, the checkpoint and the starting set
-        self.set_id = hashlib.sha256(
-            json.dumps(
-                {"q": self.questions, "f": self.reader.fingerprint(), "s": source}, sort_keys=True
-            ).encode("utf-8")
-        ).hexdigest()[:16]
+        #: (and the modality, for a picture learner: its features are not comparable with text ones)
+        ident = {"q": self.questions, "f": self.reader.fingerprint(), "s": source}
+        if self.modality != "text":
+            ident["m"] = self.modality
+        self.set_id = hashlib.sha256(json.dumps(ident, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         self._lock = threading.RLock()  # heads, store, version
         self._inbox = threading.Lock()  # the feedback buffer
         self._cache = (
@@ -373,6 +493,7 @@ class Learner:
         )  # text key -> {qid: vega's own label}, from decide(), reused too
         self._cache_max = int(cache)
         self._buffer = []
+        self._corrections = set()  # keys of records a person corrected, not counted by the drift guard
         self._held, self._undo, self.last_error = {}, None, None
         resumed = self._resume()
         if resumed is not None:
@@ -398,16 +519,48 @@ class Learner:
     def save_bundle(self, path, name=None):
         """The learned state as a bundle (.zip) another Learner can start from, on another machine."""
         with self._lock:
-            learn, start = bundle_bytes(self.reader, self.questions, self.store, name)
+            learn, start = bundle_bytes(
+                self.reader, self.questions, self.store, name, self.modality, calibration=self.calibration
+            )
         with zipfile.ZipFile(os.path.expanduser(os.fspath(path)), "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("vega/learn.json", learn)
             z.writestr("vega/start.npz", start)
         return os.fspath(path)
 
     # ------------------------------------------------------------------ answering
+    def record(self, x):
+        """A record ready for this learner: a string, a vegaml.learn.Record, or a dict of text / image /
+        images / audio / video or turns of them (transcribed and sampled here, once)."""
+        rec = as_record(x, self.reader, **self.read_kw)
+        if rec.kind != self.modality:
+            other = "Learner(questions, modality=%r)" % rec.kind
+            raise ValueError(
+                "this learner reads %s; that record is %s, which %s reads"
+                % (self.modality, "a picture" if rec.kind == "image" else "text", other)
+            )
+        return rec
+
+    def _item(self, x):
+        """What the caches and the reader take: the text itself for a text record, the Record for a
+        picture."""
+        if isinstance(x, str) and self.modality == "text":
+            return x
+        rec = self.record(x)
+        return rec.text if rec.kind == "text" else rec
+
     def decide(self, text, questions=None):
-        """Answer every installed question (or the ids in `questions`) about one message."""
+        """Answer every installed question (or the ids in `questions`) about one record: a message, or
+        what `record()` takes (a picture, a recording, a clip, a conversation)."""
         t0 = time.perf_counter()
+        info = None
+        if isinstance(text, str) and self.modality != "text":
+            self.record(text)  # says which learner takes it
+        if not isinstance(text, str):
+            rec = text if isinstance(text, Record) else self.record(text)
+            info = rec.describe()
+            text = rec.text if rec.kind == "text" else rec
+            if rec.kind != self.modality:
+                self.record(rec)  # says which learner takes it
         qids = list(self.questions) if questions is None else list(questions)
         unknown = [q for q in qids if q not in self.questions]
         if unknown:
@@ -426,6 +579,7 @@ class Learner:
                 from vegaml import label_ids
 
                 probs = h.predict(f[q].astype(np.float32), allowed=label_ids(self.questions[q]))
+                probs = temper(probs, (self.calibration.get(q) or {}).get("temperature"))
                 answers[q] = answer_from(self.questions[q], probs)
         if by_engine:
             qs = {q: self.questions[q] for q in by_engine}
@@ -438,11 +592,14 @@ class Learner:
             self._eng.move_to_end(k)
             while len(self._eng) > self._cache_max:
                 self._eng.popitem(last=False)
-        return {
+        out = {
             "answers": {q: answers[q] for q in qids},
             "version": version,
             "latency_ms": round(1000 * (time.perf_counter() - t0), 1),
         }
+        if info is not None:
+            out["record"] = info
+        return out
 
     def decide_many(self, texts, questions=None):
         return [self.decide(t, questions) for t in texts]
@@ -461,15 +618,22 @@ class Learner:
         return got
 
     # ------------------------------------------------------------------ feedback in
-    def feedback(self, text, answers):
+    def feedback(self, text, answers, correction=False):
         """One decision whose right answer is now known. `answers`: {question id: answer}, written as decide()
         returns it in "answer" (an option name, true/false, or a level). Returns at once; learning happens
-        every `every` answers in the background."""
+        every `every` answers in the background.
+
+        correction: a person is fixing an answer they know was wrong (vega's, or one given earlier). It
+        replaces the earlier answer for the same record and is always learned: the guard that holds a
+        batch disagreeing with what was learned (a broken feed) does not count it, since a correction is
+        meant to disagree."""
         if self.follow:
             raise RuntimeError(
                 "this learner follows another one's saved state and does not learn; "
                 "send feedback to the writer"
             )
+        if not isinstance(text, str) or self.modality != "text":
+            text = self._item(text)
         labels = {}
         for q, v in answers.items():
             if q not in self.questions:
@@ -479,12 +643,63 @@ class Learner:
                 )
             labels[q] = label_of(self.questions[q], v)
         with self._inbox:
+            if correction:
+                self._corrections.add(_key(text))
             self._buffer.append((text, labels))
             ready = len(self._buffer) >= self.every
             if ready and self._thread is not None:
                 self._jobs.put(self._buffer)
                 self._buffer = []
         return {"pending": self.pending(), "learning": ready}
+
+    def calibrate(self, examples, trust=0.95, min_rows=30):
+        """Fit each head's temperature on labelled examples it was not fitted on ([(record, {question id:
+        answer})]), so its confidence means what it says, and record the start line: the lowest calibrated
+        confidence above which it was right `trust` of the time. Attached to this learner at once, applied
+        by decide(), saved with its state and carried by save_bundle(). Returns per question: temperature,
+        start line and the calibration error before and after. Calibrate again after much learning."""
+        from vegaml import label_ids
+
+        items = []
+        for t, lab in examples:
+            got = {q: label_of(self.questions[q], v) for q, v in lab.items() if q in self.questions}
+            items.append((self._item(t), got))
+        with self._lock:
+            heads = dict(self.heads)
+        qids = [q for q in self.questions if heads.get(q) and heads[q]["usable"]]
+        if not qids or not items:
+            return {}
+        feats = self.reader.features([t for t, _ in items], {q: self.questions[q] for q in qids})
+        report, cal = {}, dict(self.calibration)
+        for qi, q in enumerate(qids):
+            labels = label_ids(self.questions[q])
+            rows = [
+                (heads[q]["head"].predict(feats[i, qi].astype(np.float32), allowed=labels), lab[q])
+                for i, (_, lab) in enumerate(items)
+                if q in lab
+            ]
+            if len(rows) < min_rows:
+                continue
+            t = fit_temperature(rows)
+            before = [max(p.values()) for p, _ in rows]
+            after_p = [temper(p, t) for p, _ in rows]
+            after = [max(p.values()) for p in after_p]
+            right = [max(p, key=p.get) == y for p, (_, y) in zip(after_p, rows, strict=True)]
+            cal[q] = {
+                "temperature": round(t, 4),
+                "start_line": start_line(after, right, trust, min_rows),
+                "trust": trust,
+                "rows": len(rows),
+                "accuracy": round(sum(right) / len(right), 4),
+                "error_before": round(calibration_error(before, right), 4),
+                "error_after": round(calibration_error(after, right), 4),
+                "head_version": self.version,
+            }
+            report[q] = cal[q]
+        with self._lock:
+            self.calibration = cal
+            self._save()
+        return report
 
     def pending(self):
         with self._inbox:
@@ -562,15 +777,19 @@ class Learner:
                 [y for _, y in rows],
                 [eng[_key(t)][q] for t, _ in rows],
                 "yours",
+                keys=[_key(t) for t, _ in rows],
             )
             touched.append(q)
         new, held, expected, refit = dict(old), {}, dict(self.expected), []
         from vegaml import label_ids
 
+        with self._inbox:
+            fixed = {_key(t) for t in texts} & self._corrections
+            self._corrections -= fixed
         for q in touched:
-            rows = [(t, lab[q]) for t, lab in batch if q in lab]
+            rows = [(t, lab[q]) for t, lab in batch if q in lab and _key(t) not in fixed]
             before = old.get(q)
-            if before is not None and before["usable"]:
+            if before is not None and before["usable"] and rows:
                 labels = label_ids(self.questions[q])
                 agree = float(
                     np.mean(
@@ -607,11 +826,12 @@ class Learner:
         if held:
             # the held questions keep their rows out of the store until accept() or discard()
             for q in held:
-                store.X[q], store.y[q], store.e[q], store.src[q] = (
+                store.X[q], store.y[q], store.e[q], store.src[q], store.k[q] = (
                     self.store.X[q],
                     self.store.y[q],
                     self.store.e[q],
                     self.store.src[q],
+                    self.store.k[q],
                 )
                 held[q]["batch"] = [(t, {q: lab[q]}) for t, lab in batch if q in lab]
         with self._lock:
@@ -703,6 +923,7 @@ class Learner:
             "version": self.version,
             "set": self.set_id,
             "expected": self.expected,
+            "calibration": self.calibration,
             "saved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         }
         with open(os.path.join(d, "meta.json.tmp"), "w", encoding="utf-8") as f:
@@ -733,6 +954,8 @@ class Learner:
             with open(m, encoding="utf-8") as f:
                 meta = json.load(f)
             if meta.get("set") == self.set_id:
+                if meta.get("calibration"):
+                    self.calibration = dict(meta["calibration"])
                 return meta["version"], s, meta.get("expected") or {}
         return None
 

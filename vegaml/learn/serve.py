@@ -257,7 +257,42 @@ def main(argv=None):
     t.add_argument("--jwt-issuer", default=None)
     st = sub.add_parser("status", help="print what the learner knows, without serving")
     source(st)
+    px = sub.add_parser("proxy", help="run vega in front of an LLM API (Anthropic or OpenAI format)")
+    px.add_argument("--host", default="127.0.0.1")
+    px.add_argument("--port", type=int, default=8890)
+    px.add_argument("--state", default="./vega-proxy", help="where each decision's learner is saved")
+    px.add_argument("--model", default=None, help="vega checkpoint (default: vegaml's)")
+    px.add_argument("--device", default=None, help="cuda, cpu or mps (default: cuda when present)")
+    px.add_argument("--every", type=int, default=25, help="learn after this many LLM answers")
+    px.add_argument("--audit", type=float, default=0.05, help="share of sure answers still checked")
+    px.add_argument("--mode", default="live", choices=("live", "shadow", "vega", "off"))
+    px.add_argument(
+        "--trust", type=float, default=0.95, help="default share of answers that must agree with the LLM"
+    )
+    px.add_argument(
+        "--context",
+        default="full",
+        choices=("full", "recent", "last"),
+        help="what vega reads of a long conversation (x-vega-context per request)",
+    )
+    px.add_argument("--context-chars", type=int, default=12000, help="how much of it, in characters")
+    px.add_argument(
+        "--gpu-memory",
+        type=float,
+        default=None,
+        help="cap this process at this share of the GPU (0-1); the cache is freed instead of growing past it",
+    )
+    px.add_argument("--anthropic-url", default="https://api.anthropic.com")
+    px.add_argument("--openai-url", default="https://api.openai.com")
+    px.add_argument(
+        "--keys-file", default=None, help="JSON {vega key: tenant}; or set VEGA_PROXY_KEYS=key:tenant,..."
+    )
     a = ap.parse_args(argv)
+
+    if a.cmd == "proxy":
+        from .proxy import run
+
+        return run(a)
 
     if a.cmd == "token":
         secret = os.environ.get("VEGAML_LEARN_JWT_SECRET")

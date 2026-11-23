@@ -137,6 +137,39 @@ def test_the_starting_set_gives_way_to_your_own_answers(tmp_path):
     assert len(L.store.rows("team")) == 100  # 70 starting rows + 30 of yours
 
 
+def test_a_correction_replaces_the_answer_it_corrects(tmp_path):
+    L, *_ = make(tmp_path, start_rows=100, every=1)
+    first_text, first = rows(100, 1)[0]
+    wrong = {"team": "sales" if first["team"] != "sales" else "billing", "urgent": first["urgent"]}
+    # a starting-set row corrected: one row for that record, carrying the new answer
+    L.feedback(first_text, wrong, correction=True)
+    L.step(min_rows=1)
+    keys = L.store.k["team"]
+    k = keys[-1]
+    assert keys.count(k) == 1 and L.store.y["team"][-1] == wrong["team"]
+    assert L.store.src["team"][-1] == "yours"
+    assert L.status()["questions"]["team"]["starting_set"] == 99
+    # one of your own answers corrected later, and the same record twice in one batch: newest wins
+    t, lab = rows(1, 77)[0]
+    L.feedback(t, lab)
+    L.step(min_rows=1)
+    fixed = {"team": "technical" if lab["team"] != "technical" else "billing", "urgent": not lab["urgent"]}
+    L.feedback(t, lab)
+    L.feedback(t, fixed, correction=True)
+    out = L.step(min_rows=1)
+    assert out["held"] == {}  # a person's correction is learned, not held as drift
+    for q in ("team", "urgent"):
+        ks = L.store.k[q]
+        assert ks.count(ks[-1]) == 1
+    assert L.store.y["team"][-1] == fixed["team"] and L.store.y["urgent"][-1] == str(fixed["urgent"]).lower()
+    # the keys survive a save and a bundle
+    raw = L.store.dump()
+    from vegaml.learn.learner import Store
+
+    back = Store.load(raw, list(Q))
+    assert back.k["team"] == L.store.k["team"]
+
+
 def test_a_batch_that_contradicts_what_it_learned_is_held_then_accepted_or_discarded(tmp_path):
     L, *_ = make(tmp_path, every=100)
     for t, lab in rows(100, 7):
@@ -343,3 +376,44 @@ def test_tokens_from_your_own_identity_provider_are_checked_with_its_public_key(
         c.post("/v1/decide", json={"text": "x"}, headers={"authorization": "Bearer " + wrong}).status_code
         == 401
     )
+
+
+def test_temperature_softens_an_over_confident_head():
+    from vegaml.learn.learner import calibration_error, fit_temperature, temper
+
+    # says 0.99 every time but is right 70% of the time
+    rows = [({"a": 0.99, "b": 0.01}, "a" if i % 10 < 7 else "b") for i in range(200)]
+    t = fit_temperature(rows)
+    assert t > 1.5
+    after = temper(rows[0][0], t)["a"]
+    assert 0.6 < after < 0.8
+    right = [y == "a" for _, y in rows]
+    assert calibration_error([after] * 200, right) < calibration_error([0.99] * 200, right)
+
+
+def test_calibration_attaches_is_applied_and_travels_in_the_bundle(tmp_path):
+    from vegaml.learn import Escalator
+
+    L, *_ = make(tmp_path, start_rows=200, workdir=str(tmp_path / "w"))
+    raw = L.decide(TEST[0][0])["answers"]["team"]["confidence"]
+    report = L.calibrate(rows(200, 42))
+    assert set(report) == {"team", "urgent"}
+    assert report["team"]["temperature"] > 0 and report["team"]["rows"] == 200
+    assert L.calibration["team"]["temperature"] == report["team"]["temperature"]
+    t = report["team"]["temperature"]
+    cal = L.decide(TEST[0][0])["answers"]["team"]["confidence"]
+    assert (abs(t - 1) < 1e-6 and cal == raw) or cal != raw
+    # carried by the bundle and applied by the learner that loads it
+    path = str(tmp_path / "b.zip")
+    L.save_bundle(path)
+    M = Learner(bundle=path, reader=L.reader, auto=False)
+    assert M.calibration["team"]["temperature"] == t
+    assert M.decide(TEST[0][0])["answers"]["team"]["confidence"] == cal
+    # and kept with the saved state
+    R = Learner(Q, rows(200, 1), reader=L.reader, auto=False, workdir=str(tmp_path / "w"))
+    assert R.calibration.get("team", {}).get("temperature") == t
+    # an escalator can start from the calibrated lines instead of earning them from the top
+    E = Escalator(M, lambda text, qs: None, line="calibrated")
+    want = M.calibration["team"]["start_line"]
+    assert E.line["team"] == (min(E.max_line, want) if want is not None else E.max_line)
+    assert Escalator(M, lambda text, qs: None).line["team"] == E.max_line

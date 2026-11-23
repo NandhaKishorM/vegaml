@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vegaml"
-version = "0.18.0"
+version = "0.19.0"
 description = "Typed decisions from a frozen language model and a small physics engine: calibrated probabilities, conformal sets, 73k context, images, speech."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -51,6 +51,8 @@ dev = ["pytest>=8.0", "ruff>=0.6", 'tomli>=2.0; python_version < "3.11"']
 serve = ["fastapi>=0.110", "uvicorn>=0.27"]
 # `pip install vegaml[learn]` adds the continuous learner's REST server with JWT (python -m vegaml.learn serve).
 learn = ["fastapi>=0.110", "uvicorn>=0.27", "pyjwt[crypto]>=2.8"]
+# `pip install vegaml[proxy]` puts vega in front of an LLM API (python -m vegaml.learn proxy).
+proxy = ["fastapi>=0.110", "uvicorn>=0.27", "httpx>=0.27"]
 # `pip install vegaml[claude]` lets Claude teach the learner what vega is unsure of (vegaml.learn.claude_teacher).
 claude = ["anthropic>=2.0"]
 # `pip install vegaml[mlx]` runs the decision engine on Apple silicon without torch (vegaml.mlx_engine).
