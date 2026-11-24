@@ -425,6 +425,13 @@ def test_a_limit_stops_vega_answering_and_never_refuses(tmp_path):
     lim = c.get("/v1/vega/usage", headers=h).json()["limit"]
     assert lim["reached"] and lim["used"] == before + 3 and lim["left"] == 0 and lim["resets"] > lim["since"]
     assert c.get("/v1/vega/admin/limits", headers=A).json()["limits"][0]["owner"] == "user_1"
+    act = c.get("/v1/vega/admin/activity", params={"days": 30}, headers=A).json()
+    assert (
+        act["tenants"][0]["tenant"] == "user_1"
+        and act["tenants"][0]["keys"] == 1
+        and act["rows"][0]["vega"] > 0
+    )
+    assert c.get("/v1/vega/admin/activity").status_code == 401
     logs = c.get("/v1/vega/admin/logs", params={"owner": "user_1", "limit": 1}, headers=A).json()["events"]
     assert logs[0]["escalated"] == "limit" and logs[0]["source"] == "llm"
     # vega mode never calls the LLM, but past the cap it has to
@@ -487,3 +494,30 @@ def test_ledger_limits_and_exact_windows(tmp_path):
     assert led.usage(owner="a", since=last_month - 1, until=month_start(now))["totals"]["vega"] == 2
     assert led.usage(owner="a", days=30)["until"] is None
     assert led.vega_count("a", month_start(now)) == 3 and led.vega_count("a", 0, until=month_start(now)) == 2
+    # activity: a row per tenant per day, a line per tenant, and the people who made a key and never used it
+    led.create_key("c", "unused")
+    led.create_key("a", "prod")
+    led.log(
+        tenant="a", source="vega", decision="d1", model="m", read="text,image", mode="shadow", saved_usd=0.5
+    )
+    act = led.activity(days=90)
+    by = {t["tenant"]: t for t in act["tenants"]}
+    assert (
+        set(by) == {"a", "b", "c"}
+        and by["c"]["requests"] == 0
+        and by["c"]["keys"] == 1
+        and by["c"]["first_seen"] is None
+    )
+    assert (
+        by["a"]["requests"] == 7
+        and by["a"]["vega"] == 6
+        and by["a"]["active_days"] == 2
+        and by["a"]["keys"] == 1
+    )
+    assert by["a"]["first_vega"] == last_month and by["a"]["images"] == 1 and by["a"]["shadow"] == 1
+    assert by["a"]["first_seen"] == last_month and by["a"]["saved_usd"] == 0.5 and by["b"]["keys"] == 0
+    days_a = [r for r in act["rows"] if r["tenant"] == "a"]
+    assert (
+        len(days_a) == 2 and sum(r["requests"] for r in days_a) == 7 and days_a[0]["day"] < days_a[1]["day"]
+    )
+    assert led.activity(days=1)["rows"][0]["day"] == days_a[1]["day"]  # a short window drops last month's row

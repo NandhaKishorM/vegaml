@@ -344,6 +344,89 @@ class Ledger:
             "escalation_reasons": reasons,
         }
 
+    def activity(self, days=90):
+        """What a dashboard needs to see how its users behave over time, without any content: one row per
+        tenant per day for the last `days` ("rows"), and every tenant's whole history in one line each
+        ("tenants": first and last request, totals, how many days they were active, what they used)."""
+        since = time.time() - max(1, int(days)) * 86400
+        with self._lock:
+            rows = [
+                dict(r)
+                for r in self._db.execute(
+                    "SELECT tenant, date(ts, 'unixepoch') AS day, COUNT(*) AS requests,"
+                    " SUM(source = 'vega') AS vega, SUM(source = 'llm') AS llm,"
+                    " SUM(source = 'passthrough') AS passthrough,"
+                    " SUM(source = 'error' OR status >= 400) AS errors,"
+                    " SUM(COALESCE(saved_usd, 0)) AS saved_usd, SUM(COALESCE(cost_usd, 0)) AS cost_usd"
+                    " FROM events WHERE ts >= ? GROUP BY tenant, day ORDER BY day, tenant",
+                    (since,),
+                )
+            ]
+            tenants = [
+                dict(r)
+                for r in self._db.execute(
+                    "SELECT tenant, MIN(ts) AS first_seen, MAX(ts) AS last_seen, COUNT(*) AS requests,"
+                    " SUM(source = 'vega') AS vega, SUM(source = 'llm') AS llm,"
+                    " SUM(source = 'passthrough') AS passthrough,"
+                    " SUM(source = 'error' OR status >= 400) AS errors,"
+                    " MIN(CASE WHEN source = 'vega' THEN ts END) AS first_vega,"
+                    " COUNT(DISTINCT date(ts, 'unixepoch')) AS active_days,"
+                    " COUNT(DISTINCT decision) AS decisions, COUNT(DISTINCT model) AS models,"
+                    " SUM(COALESCE(saved_usd, 0)) AS saved_usd, SUM(COALESCE(cost_usd, 0)) AS cost_usd,"
+                    " SUM(mode = 'shadow') AS shadow, SUM(read LIKE '%image%') AS images,"
+                    " SUM(read LIKE '%audio%' OR read LIKE '%speech%') AS audio"
+                    " FROM events GROUP BY tenant ORDER BY last_seen DESC LIMIT 5000"
+                )
+            ]
+            keyed = {
+                r["owner"]: dict(r)
+                for r in self._db.execute(
+                    "SELECT owner, MIN(created) AS first_key, COUNT(*) AS keys,"
+                    " SUM(revoked IS NULL) AS live_keys FROM keys GROUP BY owner"
+                )
+            }
+        for d in rows + tenants:
+            for k in ("vega", "llm", "passthrough", "errors", "shadow", "images", "audio"):
+                if k in d:
+                    d[k] = int(d[k] or 0)
+            for k in ("saved_usd", "cost_usd"):
+                d[k] = round(float(d.get(k) or 0.0), 6)
+        seen = {t["tenant"] for t in tenants}
+        for t in tenants:
+            k = keyed.get(t["tenant"]) or {}
+            t["first_key"], t["keys"], t["live_keys"] = (
+                k.get("first_key"),
+                int(k.get("keys") or 0),
+                int(k.get("live_keys") or 0),
+            )
+        for owner, k in keyed.items():  # made a key, never sent a request: the step people drop at
+            if owner not in seen:
+                tenants.append(
+                    {
+                        "tenant": owner,
+                        "first_seen": None,
+                        "last_seen": None,
+                        "requests": 0,
+                        "vega": 0,
+                        "llm": 0,
+                        "passthrough": 0,
+                        "errors": 0,
+                        "first_vega": None,
+                        "active_days": 0,
+                        "decisions": 0,
+                        "models": 0,
+                        "saved_usd": 0.0,
+                        "cost_usd": 0.0,
+                        "shadow": 0,
+                        "images": 0,
+                        "audio": 0,
+                        "first_key": k["first_key"],
+                        "keys": int(k["keys"]),
+                        "live_keys": int(k["live_keys"] or 0),
+                    }
+                )
+        return {"days": int(days), "rows": rows, "tenants": tenants}
+
     def logs(self, owner=None, limit=100, before=None, decision=None, source=None):
         """The newest events, newest first; `before` (an event id) pages back."""
         q, args = "SELECT * FROM events WHERE 1 = 1", []

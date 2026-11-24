@@ -975,6 +975,13 @@ def create_app(
         admin(request)
         return {"limits": [ledger.get_limit(owner)] if owner else ledger.limits()}
 
+    @app.get("/v1/vega/admin/activity")
+    def admin_activity(request: Request, days: int = 90):
+        """Per tenant per day, and every tenant's history in one line: what retention, active-user and funnel
+        charts are drawn from. No content, as everywhere in the ledger."""
+        admin(request)
+        return ledger.activity(days=days)
+
     @app.get("/v1/vega/admin/logs")
     def admin_logs(request: Request, owner: str | None = None, limit: int = 100, before: int | None = None,
                    decision: str | None = None, source: str | None = None):
