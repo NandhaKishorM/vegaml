@@ -153,7 +153,7 @@ class Ledger:
     def set_limit(self, owner, vega_limit, since=None):
         """At most `vega_limit` answers by vega for `owner` per period. Past that the proxy sends every
         decision to the LLM: nothing is refused, vega just stops answering. The period is the calendar month
-        (UTC), or, with `since` (a timestamp), everything from then on. `vega_limit=None` removes the limit."""
+        (UTC), or, with `since` (a timestamp), everything from then on. `vega_limit=None` removes it."""
         owner = str(owner)
         with self._lock:
             if vega_limit is None:
