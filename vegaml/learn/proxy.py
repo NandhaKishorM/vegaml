@@ -1097,7 +1097,7 @@ def run(a):
         prices={k: tuple(v) for k, v in prices.items()},
         ledger=a.ledger,
         shared=a.ledger_shared,
-        model_name=a.model or "default",
+        model_name=a.model or "0.8b",  # vegaml's default checkpoint is the 0.8B
     )
     import uvicorn
 
