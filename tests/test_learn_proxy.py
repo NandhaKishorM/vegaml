@@ -544,3 +544,43 @@ def test_ledger_limits_and_exact_windows(tmp_path):
         len(days_a) == 2 and sum(r["requests"] for r in days_a) == 7 and days_a[0]["day"] < days_a[1]["day"]
     )
     assert led.activity(days=1)["rows"][0]["day"] == days_a[1]["day"]  # a short window drops last month's row
+
+
+def test_two_proxies_share_one_ledger(tmp_path):
+    import time
+
+    from vegaml.learn.ledger import Ledger
+
+    path = str(tmp_path / "shared.db")
+    a, b = Ledger(path, shared=0.05), Ledger(path, shared=0.05)
+    key, row = a.create_key("user_1", "prod")
+    assert b.tenant_for(key) == (row["id"], "user_1")  # a key made through one works on the other at once
+    a.set_limit("user_1", 3)
+    time.sleep(0.08)
+    assert b.get_limit("user_1")["vega_limit"] == 3 and not b.over_limit("user_1")
+    a.log(tenant="user_1", source="vega")
+    b.log(tenant="user_1", source="vega")
+    a.log(tenant="user_1", source="vega")
+    time.sleep(0.08)  # each sees the other's answers once what it remembered is old
+    assert a.over_limit("user_1") and b.over_limit("user_1") and b.get_limit("user_1")["used"] == 3
+    assert (
+        a.usage(owner="user_1", days=1)["totals"]["vega"]
+        == 3
+        == b.usage(owner="user_1", days=1)["totals"]["vega"]
+    )
+    assert a.revoke_key(row["id"])
+    assert a.tenant_for(key) is None
+    time.sleep(0.08)
+    assert b.tenant_for(key) is None  # revoked through one: refused by the other
+    # a ledger that is not shared never re-reads (one proxy: nothing else can change it)
+    solo = Ledger(str(tmp_path / "solo.db"))
+    k2, _ = solo.create_key("u", "x")
+    assert solo.tenant_for(k2) and solo.shared == 0.0
+
+
+def test_the_proxy_says_which_model_answered(tmp_path):
+    app = app_with(tmp_path, LLM(), model_name="4b")
+    c = TestClient(app)
+    assert c.get("/health").json()["model"] == "4b"
+    r = c.post("/v1/messages", json=ant_body("refund my invoice"), headers=H)
+    assert r.headers["x-vega-model"] == "4b"

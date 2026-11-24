@@ -511,6 +511,8 @@ def create_app(
     budget=DEFAULT_BUDGET,
     ledger=None,
     admin_token=None,
+    model_name=None,
+    shared=0.0,
 ):
     """keys: {vega key: tenant}; None or {} (and no key in the ledger) lets anyone in as tenant "default"
     (local use only). transport: an httpx transport for the upstream calls (tests).
@@ -531,7 +533,7 @@ def create_app(
 
     os.makedirs(state, exist_ok=True)
     if ledger is None or isinstance(ledger, str):
-        ledger = Ledger(ledger or os.path.join(state, "ledger.db"))
+        ledger = Ledger(ledger or os.path.join(state, "ledger.db"), shared=shared)
     admin_token = admin_token if admin_token is not None else os.environ.get("VEGA_ADMIN_TOKEN", "")
     prices = dict(PRICES, **(prices or {}))
     hashed = {hashlib.sha256(k.encode()).hexdigest(): t for k, t in (keys or {}).items()}
@@ -807,6 +809,8 @@ def create_app(
             "x-vega-latency-ms": "%.1f" % (1000 * (time.perf_counter() - t0)),
             "x-vega-read": ",".join(sorted(set(rec.sources))) or rec.kind,
         }
+        if model_name:
+            vh["x-vega-model"] = model_name
         if capped:
             why = ["limit"]
             vh["x-vega-limit"] = "reached"
@@ -837,7 +841,7 @@ def create_app(
 
     @app.get("/health")
     def health():
-        return {"ok": True, "decisions": len(desks), "checkpoint": reader.fingerprint()}
+        return {"ok": True, "decisions": len(desks), "checkpoint": reader.fingerprint(), "model": model_name}
 
     @app.post("/v1/messages")
     async def messages(request: Request):
@@ -1091,6 +1095,9 @@ def run(a):
         context=a.context,
         budget=a.context_chars,
         prices={k: tuple(v) for k, v in prices.items()},
+        ledger=a.ledger,
+        shared=a.ledger_shared,
+        model_name=a.model or "default",
     )
     import uvicorn
 

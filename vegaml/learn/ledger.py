@@ -77,9 +77,15 @@ def next_month_start(now=None):
 
 
 class Ledger:
-    def __init__(self, path):
+    def __init__(self, path, shared=0.0):
+        """`shared`: seconds after which what this process remembers (keys, limits, counts) is read again.
+        Leave it at 0 for one proxy. Give two proxies that write to the same file a few seconds each, so a key
+        revoked or a limit reached through one is seen by the other; a limit can then overshoot by what the
+        other answered in that time, never more."""
         self.path = path
-        self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self.shared = float(shared or 0.0)
+        self._read_at = time.monotonic()
+        self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None, timeout=30)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
         with self._lock:
@@ -88,6 +94,14 @@ class Ledger:
         self._cache = {}  # key hash -> (key id, owner), revocation clears it
         self._limits = None  # owner -> (vega_limit, since or None), read once
         self._used = {}  # owner -> [window start, vega answers in it], kept in step by log()
+
+    def _fresh(self):
+        """Forget what was remembered once it is older than `shared`: another process may have changed it."""
+        if self.shared and time.monotonic() - self._read_at > self.shared:
+            self._cache.clear()
+            self._limits = None
+            self._used.clear()
+            self._read_at = time.monotonic()
 
     # ------------------------------------------------------------------ keys
     def create_key(self, owner, name=""):
@@ -135,6 +149,7 @@ class Ledger:
 
     def tenant_for(self, key):
         """(key id, owner) for a live key, or None."""
+        self._fresh()
         h = _hash(key or "")
         got = self._cache.get(h)
         if got is None:
@@ -169,6 +184,7 @@ class Ledger:
             self._used.pop(owner, None)
 
     def _limit_rows(self):
+        self._fresh()
         if self._limits is None:
             with self._lock:
                 rows = self._db.execute("SELECT owner, vega_limit, since FROM limits").fetchall()
