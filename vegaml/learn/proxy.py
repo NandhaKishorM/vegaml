@@ -19,6 +19,10 @@ Modes, per request (x-vega-mode header) or per decision (POST /v1/vega/mode):
     vega    vega answers everything and the LLM is never called
     off     plain passthrough
 
+Limits: POST /v1/vega/admin/limits {"owner": id, "vega_limit": n} caps how many decisions vega answers for an
+owner per calendar month. Past the cap nothing is refused: the LLM answers every decision (x-vega-limit:
+reached) and vega keeps reading alongside, so what it learned is ready when the cap lifts.
+
 How sure vega must be, per field: x-vega-trust: topic=0.85,route=0.9 (or POST /v1/vega/trust) sets the
 share of vega's answers that must agree with the LLM before vega answers that field alone; fields left
 out keep the server default (0.95). One unsure field still sends the whole request to the LLM, so give a
@@ -756,6 +760,12 @@ def create_app(
         if bar:
             apply_trust(desk, parse_trust(bar))
         use = want or desk.mode
+        asked = use
+        # the owner's vega answers for the period are used up: the LLM answers every decision and vega only
+        # reads alongside, so nothing is refused and what it has learned is kept for when the limit lifts
+        capped = use in ("live", "vega") and ledger.over_limit(tenant)
+        if capped:
+            use = "shadow"
         if use == "off":
             t0 = time.perf_counter()
             resp = await passthrough(request, api, path, raw)
@@ -784,15 +794,18 @@ def create_app(
         vh = {
             "x-vega-decision": desk.key,
             "x-vega-id": rid,
-            "x-vega-mode": use,
+            "x-vega-mode": asked,
             "x-vega-confidence": "%.4f" % (min(confs) if confs else 0.0),
             "x-vega-latency-ms": "%.1f" % (1000 * (time.perf_counter() - t0)),
             "x-vega-read": ",".join(sorted(set(rec.sources))) or rec.kind,
         }
+        if capped:
+            why = ["limit"]
+            vh["x-vega-limit"] = "reached"
         if why:
             vh["x-vega-escalated"] = ",".join(why)
         ms = 1000 * (time.perf_counter() - t0)
-        row = {"api": api, "model": spec["model"], "decision": desk.key, "mode": use, "latency_ms": ms,
+        row = {"api": api, "model": spec["model"], "decision": desk.key, "mode": asked, "latency_ms": ms,
                "confidence": min(confs) if confs else None, "escalated": ",".join(why) or None,
                "read": vh["x-vega-read"]}
         if ctx.get("resp") is not None:
@@ -886,8 +899,10 @@ def create_app(
 
     @app.get("/v1/vega/usage")
     def my_usage(request: Request, days: int = 30):
-        """Your own numbers: totals, a daily series, per decision and per model."""
-        return ledger.usage(owner=tenant_of(request), days=days)
+        """Your own numbers: totals, a daily series, per decision and per model, and your limit if you
+        have one."""
+        tenant = tenant_of(request)
+        return dict(ledger.usage(owner=tenant, days=days), limit=ledger.get_limit(tenant))
 
     @app.get("/v1/vega/logs")
     def my_logs(request: Request, limit: int = 100, before: int | None = None):
@@ -927,9 +942,38 @@ def create_app(
         return {"ok": True, "id": key_id}
 
     @app.get("/v1/vega/admin/usage")
-    def admin_usage(request: Request, owner: str | None = None, days: int = 30):
+    def admin_usage(request: Request, owner: str | None = None, days: int = 30, since: float | None = None,
+                    until: float | None = None):
+        """The last `days`, or exactly [since, until) in unix seconds: a billing period."""
         admin(request)
-        return ledger.usage(owner=owner, days=days)
+        return ledger.usage(owner=owner, days=days, since=since, until=until)
+
+    @app.post("/v1/vega/admin/limits")
+    async def admin_set_limit(request: Request):
+        """{"owner": id, "vega_limit": n} caps vega's answers per calendar month (UTC); add "since" (unix
+        seconds) to count from a fixed moment instead; "vega_limit": null removes the cap. Past the cap the
+        LLM answers every decision: nothing is refused."""
+        admin(request)
+        try:
+            body = json.loads(await request.body())
+            owner = str(body["owner"])
+            cap = body["vega_limit"]
+            cap = None if cap is None else int(cap)
+            since = body.get("since")
+            since = None if since is None else float(since)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(400, 'send {"owner": <user id>, "vega_limit": <number or null>}') from None
+        if not _NAME.fullmatch(owner):
+            raise HTTPException(400, "owner is letters, digits, - _ . only")
+        if cap is not None and cap < 0:
+            raise HTTPException(400, "vega_limit is zero or more, or null for no limit")
+        ledger.set_limit(owner, cap, since)
+        return {"ok": True, "owner": owner, "limit": ledger.get_limit(owner)}
+
+    @app.get("/v1/vega/admin/limits")
+    def admin_limits(request: Request, owner: str | None = None):
+        admin(request)
+        return {"limits": [ledger.get_limit(owner)] if owner else ledger.limits()}
 
     @app.get("/v1/vega/admin/logs")
     def admin_logs(request: Request, owner: str | None = None, limit: int = 100, before: int | None = None,
