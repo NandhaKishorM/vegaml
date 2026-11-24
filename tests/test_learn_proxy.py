@@ -593,4 +593,6 @@ def test_a_removed_state_folder_does_not_fail_requests(tmp_path):
     c = TestClient(app)
     run_stream(c, 12, 1)
     shutil.rmtree(tmp_path / "state" / "acme")  # someone tidied the disk under a running proxy
-    assert all(src in ("llm", "vega") for src, _ in run_stream(c, 30, 2))  # saves every 10 requests: none fails
+    assert all(
+        src in ("llm", "vega") for src, _ in run_stream(c, 30, 2)
+    )  # saves every 10 requests: none fails
