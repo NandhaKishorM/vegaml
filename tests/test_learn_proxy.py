@@ -451,6 +451,29 @@ def test_a_limit_stops_vega_answering_and_never_refuses(tmp_path):
         is None
     )
     assert sum(src == "vega" for src, _ in run_stream(c, 60, 11, headers=h)) > 30
+    # the dashboard acts for a user without their key; a wrong token or a missing user is refused, and neither
+    # header (nor the admin token) ever reaches the LLM
+    as_user = {
+        "x-vega-admin": "adm-secret",
+        "x-vega-as": "user_1",
+        "x-api-key": "sk-ant-test",
+        "anthropic-version": "2023-06-01",
+    }
+    r = c.post(
+        "/v1/messages", json=ant_body("refund my invoice"), headers=as_user | {"x-vega-mode": "shadow"}
+    )
+    assert r.status_code == 200 and r.headers["x-vega-source"] == "llm"
+    assert "x-vega-admin" not in llm.seen[-1] and "x-vega-as" not in llm.seen[-1]
+    assert "adm-secret" not in json.dumps(llm.seen[-1])
+    assert (
+        c.post("/v1/messages", json=ant_body("x"), headers=as_user | {"x-vega-admin": "wrong"}).status_code
+        == 401
+    )
+    assert (
+        c.post("/v1/messages", json=ant_body("x"), headers={"x-vega-admin": "adm-secret"}).status_code == 401
+    )
+    assert c.post("/v1/messages", json=ant_body("x"), headers={"x-vega-as": "user_1"}).status_code == 401
+    assert c.get("/v1/vega/usage", headers=as_user).json()["owner"] == "user_1"
 
 
 def test_ledger_limits_and_exact_windows(tmp_path):

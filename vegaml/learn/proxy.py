@@ -553,7 +553,15 @@ def create_app(
     app = FastAPI(title="vega Proxy", docs_url=None, redoc_url=None, lifespan=lifespan)
 
     def tenant_of(request):
-        """The tenant a request belongs to: a key from VEGA_PROXY_KEYS, or one made through the admin API."""
+        """The tenant a request belongs to: a key from VEGA_PROXY_KEYS, or one made through the admin API.
+        A dashboard's server can also act for one of its users without holding their key: x-vega-admin (the
+        admin token) with x-vega-as (the user). Both are x-vega-* headers, so neither is ever sent on."""
+        boss, who = request.headers.get("x-vega-admin") or "", request.headers.get("x-vega-as") or ""
+        if boss or who:
+            if not (admin_token and boss and hmac.compare_digest(boss, admin_token) and _NAME.fullmatch(who)):
+                raise HTTPException(401, "x-vega-admin and x-vega-as need the admin token and a user id")
+            request.state.key_id = None
+            return who
         k = request.headers.get("x-vega-key") or ""
         if k:
             t = hashed.get(hashlib.sha256(k.encode()).hexdigest())
