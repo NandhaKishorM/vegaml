@@ -584,3 +584,13 @@ def test_the_proxy_says_which_model_answered(tmp_path):
     assert c.get("/health").json()["model"] == "4b"
     r = c.post("/v1/messages", json=ant_body("refund my invoice"), headers=H)
     assert r.headers["x-vega-model"] == "4b"
+
+
+def test_a_removed_state_folder_does_not_fail_requests(tmp_path):
+    import shutil
+
+    app = app_with(tmp_path, LLM())
+    c = TestClient(app)
+    run_stream(c, 12, 1)
+    shutil.rmtree(tmp_path / "state" / "acme")  # someone tidied the disk under a running proxy
+    assert all(src in ("llm", "vega") for src, _ in run_stream(c, 30, 2))  # saves every 10 requests: none fails

@@ -449,6 +449,7 @@ class Desk:
                 "escalator": self.esc.state(),
             }
             self._since_save = 0
+        os.makedirs(self.dir, exist_ok=True)  # a folder removed under a running proxy must not fail a request
         tmp = os.path.join(self.dir, "desk.json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f)
