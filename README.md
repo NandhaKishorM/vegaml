@@ -14,7 +14,7 @@
 >
 > **[Start free at platform.embedding.in →](https://platform.embedding.in)** · [Docs](https://platform.embedding.in/docs) · [embedding.in](https://embedding.in)
 >
-> Or run it on your own servers: `pip install "vegaml[proxy]"`, then `python -m vegaml.learn proxy`.
+> Or run it on your own servers: `pip install "vegaml-learn[proxy]"`, then `python -m vegaml_learn proxy` (free for noncommercial use; [commercial licence](https://embedding.in)).
 
 <p align="center"><a href="https://github.com/sponsors/NandhaKishorM"><img src="https://img.shields.io/badge/Sponsor-vegaml-ea4aaa?logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub" /></a></p>
 
@@ -22,17 +22,19 @@
 
 <p align="center"><img src="https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega-valleys.svg" width="900" alt="How it decides: a frozen LLM reads the message once, every answer is a valley, and a particle rolls and settles in one. Where it settles is the answer, with its probability, conformal set, abstain and unbound flags." /></p>
 
-**What vega does, all open source under Apache 2.0:**
+**What vega does.** vegaml is open source under Apache 2.0. Continuous learning, the teacher loop and the vega Proxy are in a separate package, [vegaml-learn](learn/README.md), which is free for noncommercial use.
+
+- **Continuous learning has its own package, new in 0.20.** `pip install vegaml-learn` for `Learner`, `Escalator` and the vega Proxy. It is licensed under [PolyForm Noncommercial 1.0.0](learn/LICENSE): free for personal, research and nonprofit use; commercial use needs a licence from [Embedding Space](https://embedding.in). Existing imports (`from vegaml import Learner`, `vegaml.learn`, `python -m vegaml.learn`) keep working once it is installed. The learner in vegaml 0.17 to 0.19 stays Apache 2.0.
 
 - **Text, images, audio and video.** `v.decide(text)`, `v.decide_image(img)`, `v.decide_audio(wav)` and `v.decide_video(clip)` give the same typed answers for each.
 - **73,728 tokens of context.** Whole contracts, threads and logs in one read.
 - **Abstain and unbound.** Every engine answer carries a calibrated probability, a conformal answer set, an `abstain` flag when it should not commit, and an `unbound` flag when the input sits far from every answer (likely off-distribution).
 - **Physics, not text generation.** Each candidate answer is a well in an energy landscape; the input becomes a particle that rolls and settles in one of them. Deterministic, constant cost, nothing generated. See [How it works](#how-it-works).
 - **Any LLM as the reader.** vega-U is one 14.3M engine over any frozen reader from 0.8B to 27B, and `vegaml.attach()` connects your own.
-- **vega Proxy, new in 0.19.** `python -m vegaml.learn proxy` sits in front of the OpenAI or Anthropic API. Requests that ask for structured choices or yes/no fields are decisions: your LLM answers them while vega learns, and vega answers the ones it has earned (95% agreement over 30 checks, per question; 5% still checked forever). Everything else passes through. Every request is recorded (who answered, model, time, tokens, cost, savings, confidence; never the content), with per-user keys and an admin API. Measured: about half of a Claude or GPT decision bill saved at steady state. Hosted at [platform.embedding.in](https://platform.embedding.in).
-- **Corrections and calibration, new in 0.19.** `learner.feedback(record, answers, correction=True)` replaces the earlier answer for the same record and is never held as drift. `learner.calibrate(examples)` fits a temperature per question, so a confidence of 0.9 means about 90% right; it is saved with the learner and in its bundle, and `Escalator(line="calibrated")` starts from the calibrated bars. Learners also read images, audio (via its transcript) and long conversations (`context="full" | "recent" | "last"`).
-- **A teacher for what it is unsure of, new in 0.18.** `vegaml.learn.Escalator(learner, teacher)` sends only what vega abstains on, finds unbound or is not yet sure of to a teacher (a review queue, a rules engine, a model you serve with `vllm_teacher()`, or Claude via `claude_teacher()`), serves the teacher's answer and learns from it. With Claude Opus 5 as the teacher on a 3,000-record intent stream, vega alone went from 35% to 85% right and the share sent to the teacher fell from 100% to 43%; with Qwen3.8-27B served on your own GPU instead, 35% to 79% at no API cost. On 12 public tasks it learned the teacher's policy on 7 with no labels from anyone. [Guide](docs/learn.md#a-teacher-for-what-it-is-unsure-of).
-- **Continuous learning, new in 0.17.** `vegaml.Learner` answers from day one and learns from every answer your team confirms, on your own machine: across 14 decision templates, 85% right on day one and 96% after 120 confirmed answers. Learning takes seconds on a CPU, with no GPU and no fine-tuning. [Guide](docs/learn.md).
+- **vega Proxy, new in 0.19 (vegaml-learn).** `python -m vegaml_learn proxy` sits in front of the OpenAI or Anthropic API. Requests that ask for structured choices or yes/no fields are decisions: your LLM answers them while vega learns, and vega answers the ones it has earned (95% agreement over 30 checks, per question; 5% still checked forever). Everything else passes through. Every request is recorded (who answered, model, time, tokens, cost, savings, confidence; never the content), with per-user keys and an admin API. Measured: about half of a Claude or GPT decision bill saved at steady state. Hosted at [platform.embedding.in](https://platform.embedding.in).
+- **Corrections and calibration, new in 0.19 (vegaml-learn).** `learner.feedback(record, answers, correction=True)` replaces the earlier answer for the same record and is never held as drift. `learner.calibrate(examples)` fits a temperature per question, so a confidence of 0.9 means about 90% right; it is saved with the learner and in its bundle, and `Escalator(line="calibrated")` starts from the calibrated bars. Learners also read images, audio (via its transcript) and long conversations (`context="full" | "recent" | "last"`).
+- **A teacher for what it is unsure of, new in 0.18 (vegaml-learn).** `vegaml_learn.Escalator(learner, teacher)` sends only what vega abstains on, finds unbound or is not yet sure of to a teacher (a review queue, a rules engine, a model you serve with `vllm_teacher()`, or Claude via `claude_teacher()`), serves the teacher's answer and learns from it. With Claude Opus 5 as the teacher on a 3,000-record intent stream, vega alone went from 35% to 85% right and the share sent to the teacher fell from 100% to 43%; with Qwen3.8-27B served on your own GPU instead, 35% to 79% at no API cost. On 12 public tasks it learned the teacher's policy on 7 with no labels from anyone. [Guide](docs/learn.md#a-teacher-for-what-it-is-unsure-of).
+- **Continuous learning, new in 0.17 (vegaml-learn).** `vegaml_learn.Learner` answers from day one and learns from every answer your team confirms, on your own machine: across 14 decision templates, 85% right on day one and 96% after 120 confirmed answers. Learning takes seconds on a CPU, with no GPU and no fine-tuning. [Guide](docs/learn.md).
 
 ### How abstain and unbound work
 
@@ -523,8 +525,11 @@ name; the loader remaps them, so an older checkpoint still loads with its predic
 
 ## Continuous learning
 
+In the separate package [vegaml-learn](learn/README.md): `pip install vegaml-learn`. Free for noncommercial use
+(PolyForm Noncommercial 1.0.0); commercial use needs a licence from [Embedding Space](https://embedding.in).
+
 ```python
-from vegaml import Learner
+from vegaml_learn import Learner
 
 learner = Learner(questions, examples=rows, workdir="./vega-state")   # rows: [(text, {question: answer})]
 out = learner.decide("I was charged twice this month")
@@ -534,14 +539,14 @@ learner.feedback("I was charged twice this month", {"team": "billing"})   # lear
 Each question gets a small head over vega's frozen features, refitted as confirmed answers arrive. A
 head answers only when it beats vega's own answer on the same rows; a batch that sharply disagrees
 with what was learned is held for you to accept or discard; one step can be undone; state is saved
-and resumed. `python -m vegaml.learn serve` runs it as a REST API with JWT (`pip install
-"vegaml[learn]"`). Full guide: [docs/learn.md](docs/learn.md).
+and resumed. `python -m vegaml_learn serve` runs it as a REST API with JWT (`pip install
+"vegaml-learn[serve]"`). Full guide: [docs/learn.md](docs/learn.md).
 
 With no one confirming answers, give it a teacher. Only what vega is unsure of goes to the teacher, its
 answer is served and learned from, and a 5% audit keeps a confident head honest:
 
 ```python
-from vegaml.learn import Escalator, vllm_teacher
+from vegaml_learn import Escalator, vllm_teacher
 
 desk = Escalator(learner, teacher=vllm_teacher())        # your own model; or claude_teacher(), or any function
 desk.decide("I was charged twice")["answers"]["team"]["source"]   # "teacher" until vega has learned
@@ -847,4 +852,6 @@ pickle. Tests enforce that allow-list, and CI fails on any `pickle`, `torch.load
 
 ## Licence
 
-Apache 2.0.
+vegaml is Apache 2.0. The `learn/` folder (the vegaml-learn package: continuous learning, the teacher loop
+and the vega Proxy) is under the PolyForm Noncommercial License 1.0.0, see [learn/LICENSE](learn/LICENSE);
+commercial use of it needs a licence from [Embedding Space](https://embedding.in).

@@ -424,7 +424,7 @@ class Learner:
         modality: what this learner reads. "text" takes text, conversations, audio (its transcript) and
             clips with speech; "image" takes pictures (with any words beside them) and silent clips (their
             frames). The two are read through different paths, so they are separate learners. A record is
-            a string, or a dict as vegaml.learn.as_record describes (text / image / images / audio / video,
+            a string, or a dict as vegaml_learn.as_record describes (text / image / images / audio / video,
             or turns of them).
         context / budget: what is read of a long conversation ("full", "recent" or "last") within `budget`
             characters, keeping the newest turns. frames / asr / language: how clips are sampled and
@@ -529,7 +529,7 @@ class Learner:
 
     # ------------------------------------------------------------------ answering
     def record(self, x):
-        """A record ready for this learner: a string, a vegaml.learn.Record, or a dict of text / image /
+        """A record ready for this learner: a string, a vegaml_learn.Record, or a dict of text / image /
         images / audio / video or turns of them (transcribed and sampled here, once)."""
         rec = as_record(x, self.reader, **self.read_kw)
         if rec.kind != self.modality:

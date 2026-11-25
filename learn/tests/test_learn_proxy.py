@@ -6,13 +6,13 @@ import json
 
 import pytest
 
-httpx = pytest.importorskip("httpx")  # the proxy extra: vegaml[proxy]
+httpx = pytest.importorskip("httpx")  # the proxy extra: vegaml-learn[proxy]
 
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 from test_learn_teacher import WORDS, FlaggingReader, stream, truth  # noqa: E402
 
-from vegaml.learn.proxy import (  # noqa: E402
+from vegaml_learn.proxy import (  # noqa: E402
     anthropic_spec,
     cost_of,
     create_app,

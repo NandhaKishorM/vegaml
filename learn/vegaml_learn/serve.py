@@ -1,6 +1,6 @@
 """A REST API around a Learner: FastAPI, every route but /healthz behind a JWT.
 
-    python -m vegaml.learn serve --questions questions.json --examples examples.csv --workdir ./vega-state
+    python -m vegaml_learn serve --questions questions.json --examples examples.csv --workdir ./vega-state
 
 Tokens are checked with a shared secret (HS256, env VEGAML_LEARN_JWT_SECRET) or a public key (RS256, ES256
 or EdDSA,
@@ -40,7 +40,9 @@ def create_app(
         from fastapi import Depends, FastAPI, Header, HTTPException
         from pydantic import BaseModel, Field
     except ImportError as e:
-        raise SystemExit("the REST server needs its extras: pip install 'vegaml[learn]' (%s)" % e) from e
+        raise SystemExit(
+            "the REST server needs its extras: pip install 'vegaml-learn[serve]' (%s)" % e
+        ) from e
     if not (secret or public_key or no_auth):
         raise SystemExit(
             "no way to check tokens: set VEGAML_LEARN_JWT_SECRET, pass --jwt-public-key, "
@@ -219,7 +221,7 @@ def _learner(a, auto=True):
 def main(argv=None):
     import argparse
 
-    ap = argparse.ArgumentParser(prog="python -m vegaml.learn")
+    ap = argparse.ArgumentParser(prog="python -m vegaml_learn")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def source(p):

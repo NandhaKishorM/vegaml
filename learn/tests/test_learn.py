@@ -1,4 +1,4 @@
-"""Continuous learning (vegaml.learn) end to end with a stand-in reader: features that carry the answer, plus
+"""Continuous learning (vegaml_learn) end to end with a stand-in reader: features that carry the answer, plus
 noise, so nothing downloads. Starting set, learning from feedback, the guard, undo, save and resume,
 followers,
 bundles, and the REST API with JWT."""
@@ -11,7 +11,7 @@ import random
 import numpy as np
 import pytest
 
-from vegaml.learn import Learner, build, label_of
+from vegaml_learn import Learner, build, label_of
 
 Q = {
     "team": {
@@ -164,7 +164,7 @@ def test_a_correction_replaces_the_answer_it_corrects(tmp_path):
     assert L.store.y["team"][-1] == fixed["team"] and L.store.y["urgent"][-1] == str(fixed["urgent"]).lower()
     # the keys survive a save and a bundle
     raw = L.store.dump()
-    from vegaml.learn.learner import Store
+    from vegaml_learn.learner import Store
 
     back = Store.load(raw, list(Q))
     assert back.k["team"] == L.store.k["team"]
@@ -289,7 +289,7 @@ def client(tmp_path, **kw):
     pytest.importorskip("jwt")
     from fastapi.testclient import TestClient
 
-    from vegaml.learn.serve import create_app
+    from vegaml_learn.serve import create_app
 
     L, *_ = make(tmp_path, every=1000)
     return TestClient(create_app(L, **kw)), L
@@ -297,7 +297,7 @@ def client(tmp_path, **kw):
 
 def test_every_route_but_health_needs_a_token_with_the_right_scope(tmp_path):
     c, L = client(tmp_path, secret="s3cret")
-    from vegaml.learn.serve import mint
+    from vegaml_learn.serve import mint
 
     assert c.get("/healthz").status_code == 200
     body = {"text": TEST[0][0]}
@@ -330,7 +330,7 @@ def test_an_expired_token_is_refused_and_a_server_without_a_key_will_not_start(t
     c, L = client(tmp_path, secret="s3cret")
     import jwt
 
-    from vegaml.learn.serve import create_app
+    from vegaml_learn.serve import create_app
 
     old = jwt.encode(
         {"sub": "x", "scope": "decide", "exp": dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)},
@@ -379,7 +379,7 @@ def test_tokens_from_your_own_identity_provider_are_checked_with_its_public_key(
 
 
 def test_temperature_softens_an_over_confident_head():
-    from vegaml.learn.learner import calibration_error, fit_temperature, temper
+    from vegaml_learn.learner import calibration_error, fit_temperature, temper
 
     # says 0.99 every time but is right 70% of the time
     rows = [({"a": 0.99, "b": 0.01}, "a" if i % 10 < 7 else "b") for i in range(200)]
@@ -392,7 +392,7 @@ def test_temperature_softens_an_over_confident_head():
 
 
 def test_calibration_attaches_is_applied_and_travels_in_the_bundle(tmp_path):
-    from vegaml.learn import Escalator
+    from vegaml_learn import Escalator
 
     L, *_ = make(tmp_path, start_rows=200, workdir=str(tmp_path / "w"))
     raw = L.decide(TEST[0][0])["answers"]["team"]["confidence"]

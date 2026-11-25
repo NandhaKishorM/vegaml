@@ -12,9 +12,9 @@ import numpy as np
 import pytest
 from test_learn_teacher import WORDS, FlaggingReader, stream, truth
 
-from vegaml.learn import Escalator, Learner, Record, as_record, claude_teacher, window
+from vegaml_learn import Escalator, Learner, Record, as_record, claude_teacher, window
 
-httpx = pytest.importorskip("httpx")  # the proxy extra: vegaml[proxy]
+httpx = pytest.importorskip("httpx")  # the proxy extra: vegaml-learn[proxy]
 
 PIL = pytest.importorskip("PIL")
 from PIL import Image  # noqa: E402
@@ -201,7 +201,7 @@ def test_the_teacher_is_shown_the_pictures():
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from vegaml.learn.proxy import create_app  # noqa: E402
+from vegaml_learn.proxy import create_app  # noqa: E402
 
 SCHEMA = {
     "type": "object",

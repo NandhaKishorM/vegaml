@@ -83,7 +83,7 @@ class Reader:
 
     def features(self, records, questions, batch_size=8):
         """[len(records), len(questions), d] float16: vega's pooled features, all of a record's questions in
-        one pass. A record is a string or a vegaml.learn.Record; pictures go through the vision path."""
+        one pass. A record is a string or a vegaml_learn.Record; pictures go through the vision path."""
         import torch
 
         qn = len(questions)
@@ -142,7 +142,7 @@ class Reader:
 
     def video(self, clip, frames=4, asr=None, language=None, read="auto"):
         """("speech", transcript) when the clip's sound track carries words, else ("frames", [images]).
-        read: "auto", or "frames" / "speech" to choose (see vegaml.learn.as_record)."""
+        read: "auto", or "frames" / "speech" to choose (see vegaml_learn.as_record)."""
         from vegaml import _video
 
         if read not in ("auto", "frames", "speech"):

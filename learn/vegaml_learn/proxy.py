@@ -1,6 +1,6 @@
 """vega Proxy: vega in front of an LLM API. An app changes its base URL and nothing else.
 
-    python -m vegaml.learn proxy --host 0.0.0.0 --port 8890 --state ./vega-proxy
+    python -m vegaml_learn proxy --host 0.0.0.0 --port 8890 --state ./vega-proxy
 
     client = anthropic.Anthropic(base_url="http://localhost:8890", default_headers={"x-vega-key": KEY})
     client = openai.OpenAI(base_url="http://localhost:8890/v1", default_headers={"x-vega-key": KEY})
@@ -510,7 +510,7 @@ def create_app(
 ):
     """keys: {vega key: tenant}; None or {} (and no key in the ledger) lets anyone in as tenant "default"
     (local use only). transport: an httpx transport for the upstream calls (tests).
-    ledger: a vegaml.learn.ledger.Ledger (or a path) recording every request and holding keys made through
+    ledger: a vegaml_learn.ledger.Ledger (or a path) recording every request and holding keys made through
     the admin API; default <state>/ledger.db. admin_token: the bearer token for /v1/vega/admin/* (default
     VEGA_ADMIN_TOKEN; unset, those routes answer 404)."""
     try:
@@ -520,7 +520,7 @@ def create_app(
         from starlette.background import BackgroundTask
         from starlette.concurrency import run_in_threadpool
     except ImportError as e:
-        raise SystemExit("the proxy needs its extras: pip install 'vegaml[proxy]' (%s)" % e) from e
+        raise SystemExit("the proxy needs its extras: pip install 'vegaml-learn[proxy]' (%s)" % e) from e
     if mode not in MODES:
         raise ValueError("mode is one of %s" % (MODES,))
     from .ledger import Ledger

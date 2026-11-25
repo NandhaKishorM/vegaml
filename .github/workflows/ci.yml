@@ -54,11 +54,13 @@ jobs:
           python -m pip install --upgrade pip
           # CPU-only torch keeps the job short instead of pulling CUDA wheels.
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[dev,vision,learn,proxy]"
+          pip install -e ".[dev,vision]"
+          # learn/ is its own package (vegaml-learn, noncommercial licence) and is tested alongside.
+          pip install -e "./learn[serve,proxy]"
       # No weights and no network in CI: these suites cover the readout maths, the packaging
       # metadata and the download allow-list. Anything needing a checkpoint is a local or release
       # concern, not a per-PR one.
-      - run: python -m pytest -q
+      - run: python -m pytest -q tests learn/tests
 
   build:
     name: package builds and installs clean
@@ -71,7 +73,8 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install --upgrade pip build twine
       - run: python -m build
-      - run: python -m twine check dist/*
+      - run: python -m build --outdir dist-learn learn
+      - run: python -m twine check dist/* dist-learn/*
       # The sdist and the wheel must carry the licence and the inference modules; a packaging
       # mistake that drops one of them only shows up here.
       - name: Distribution contents
@@ -89,4 +92,18 @@ jobs:
           for n in ["vegaml/__init__.py", "vegaml/_common.py", "vegaml/ttt.py", "vegaml/py.typed"]:
               assert n in wnames, "wheel missing " + n
           print("sdist", len(names), "entries; wheel", len(wnames), "entries; all required files present")
+          # vegaml is Apache 2.0: neither distribution may carry the noncommercial learner, only the shim.
+          leaked = [x for x in names + wnames if "vegaml_learn" in x or x.endswith(("learn/learner.py", "learn/proxy.py"))]
+          assert not leaked, "vegaml distribution carries vegaml-learn code: %s" % leaked[:5]
+          lsdist = glob.glob("dist-learn/*.tar.gz")[0]
+          lwheel = glob.glob("dist-learn/*.whl")[0]
+          lw = zipfile.ZipFile(lwheel)
+          for n in ["vegaml_learn/__init__.py", "vegaml_learn/learner.py", "vegaml_learn/proxy.py"]:
+              assert n in lw.namelist(), "vegaml-learn wheel missing " + n
+          lic = [x for x in lw.namelist() if x.endswith("LICENSE")]
+          assert lic and b"PolyForm Noncommercial License 1.0.0" in lw.read(lic[0]), "licence not in wheel"
+          meta = lw.read([x for x in lw.namelist() if x.endswith("METADATA")][0]).decode()
+          assert "License-Expression: PolyForm-Noncommercial-1.0.0" in meta, "licence missing from metadata"
+          assert any(x.endswith("/LICENSE") for x in tarfile.open(lsdist).getnames()), "licence not in sdist"
+          print("vegaml-learn: wheel and sdist carry the PolyForm licence")
           PY

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vegaml"
-version = "0.19.0"
+version = "0.20.0"
 description = "Typed decisions from a frozen language model and a small physics engine: calibrated probabilities, conformal sets, 73k context, images, speech."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -49,12 +49,9 @@ video = ["av>=12", "pillow>=10.0"]
 dev = ["pytest>=8.0", "ruff>=0.6", 'tomli>=2.0; python_version < "3.11"']
 # `pip install vegaml[serve]` adds the HTTP server (vegaml.serve / the vegaml-serve command).
 serve = ["fastapi>=0.110", "uvicorn>=0.27"]
-# `pip install vegaml[learn]` adds the continuous learner's REST server with JWT (python -m vegaml.learn serve).
-learn = ["fastapi>=0.110", "uvicorn>=0.27", "pyjwt[crypto]>=2.8"]
-# `pip install vegaml[proxy]` puts vega in front of an LLM API (python -m vegaml.learn proxy).
-proxy = ["fastapi>=0.110", "uvicorn>=0.27", "httpx>=0.27"]
-# `pip install vegaml[claude]` lets Claude teach the learner what vega is unsure of (vegaml.learn.claude_teacher).
-claude = ["anthropic>=2.0"]
+# Continuous learning (Learner, Escalator, the vega Proxy) is its own package since 0.20: `pip install
+# vegaml-learn`, free for noncommercial use (PolyForm Noncommercial 1.0.0). It lives in learn/ and is
+# deliberately not an extra here, so installing vegaml never brings in noncommercial code.
 # `pip install vegaml[mlx]` runs the decision engine on Apple silicon without torch (vegaml.mlx_engine).
 mlx = ['mlx>=0.30; platform_machine == "arm64" and sys_platform == "darwin"']
 # `pip install vegaml[onnx]` adds export (vegaml.onnx_export) and the onnxruntime path; onnxscript is
@@ -99,9 +96,13 @@ select = ["E", "F", "W", "I", "B"]
 # The vendored inference modules are kept close to the training-time source so the two can be diffed.
 exclude = ["vegaml/_common.py", "vegaml/_api.py", "vegaml/_vision.py"]
 
+[tool.ruff.lint.isort]
+# learn/ is its own distribution, but it is this repository's code: sort it with vegaml, not as third party.
+known-first-party = ["vegaml", "vegaml_learn"]
+
 [tool.ruff.lint.per-file-ignores]
 # FastAPI declares dependencies as argument defaults, Depends(...), by design.
-"vegaml/learn/serve.py" = ["B008"]
+"learn/vegaml_learn/serve.py" = ["B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
