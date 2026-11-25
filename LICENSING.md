@@ -24,7 +24,7 @@ charities, schools, public research bodies and government.
 Using vegaml-learn in a company, a product or a paid service needs a commercial licence from
 Embedding Space:
 
-- Prices, terms and online purchase: https://embedding.in/licence
+- Terms, and a quote for your company: https://embedding.in/licence
 - Quotes: nandakishor@embedding.in
 
 A company may evaluate vegaml-learn for 30 days without a licence, as long as it is not used to serve

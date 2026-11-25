@@ -48,7 +48,7 @@ This repository is dual-licensed by path. The short version is below; the full s
 | **vegaml-learn** (`pip install vegaml-learn`, the [`learn/`](https://github.com/NandhaKishorM/vegaml/tree/main/learn) folder) | Continuous learning, landscape learning, the teacher loop, the vega Proxy | **Noncommercial only** ([PolyForm Noncommercial 1.0.0](https://github.com/NandhaKishorM/vegaml/blob/main/learn/LICENSE)). Free for research, study, personal projects, charities, schools and government. |
 
 > [!IMPORTANT]
-> **Using vegaml-learn in a company, a product or a paid service needs a commercial licence.** That covers `Learner`, `Escalator`, `python -m vegaml_learn proxy` and `laya.Learner`. Prices and how to buy: [embedding.in/licence](https://embedding.in/licence). Quote: [nandakishor@embedding.in](mailto:nandakishor@embedding.in). The learner that shipped inside vegaml 0.17 to 0.19 stays Apache 2.0.
+> **Using vegaml-learn in a company, a product or a paid service needs a commercial licence.** That covers `Learner`, `Escalator`, `python -m vegaml_learn proxy` and `laya.Learner`. Terms, and a quote for your company: [embedding.in/licence](https://embedding.in/licence). Quote: [nandakishor@embedding.in](mailto:nandakishor@embedding.in). The learner that shipped inside vegaml 0.17 to 0.19 stays Apache 2.0.
 
 ## What it does
 
