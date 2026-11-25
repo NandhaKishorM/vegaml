@@ -2,7 +2,7 @@
 learning from it on your own machine.
 
 Licensed under the PolyForm Noncommercial License 1.0.0 (see LICENSE): free for noncommercial use.
-Commercial use needs a licence from Embedding Space (https://embedding.in).
+Commercial use needs a licence from Embedding Space (https://embedding.in/licence, nandakishor@embedding.in).
 
     from vegaml_learn import Learner   # `from vegaml import Learner` works too once this is installed
     learner = Learner(questions, examples=rows, workdir="./vega-state")

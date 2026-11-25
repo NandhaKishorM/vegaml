@@ -470,6 +470,7 @@ class Desk:
                 q: {
                     "options": len(self.questions[q].get("criteria") or {}),
                     "readout": st["questions"][q]["readout"],
+                    "learner": st["questions"][q].get("learner"),
                     "cross_validated_accuracy": st["questions"][q]["cross_validated_accuracy"],
                     "line": round(rep["line"][q], 4),
                     "trust": rep["trust"][q],
@@ -734,9 +735,18 @@ def create_app(
             streamed = bool((body or {}).get("stream")) if isinstance(body, dict) else False
             resp = await passthrough(request, api, path, raw, stream=streamed)
             tin, tout, u = (None, None, {}) if streamed else usage_of(api, resp.body)
-            note(request, tenant, api=api, model=model, source="passthrough", status=resp.status_code,
-                 latency_ms=1000 * (time.perf_counter() - t0), in_tokens=tin, out_tokens=tout,
-                 cost_usd=cost_of(model or "", u, prices) if u else None)
+            note(
+                request,
+                tenant,
+                api=api,
+                model=model,
+                source="passthrough",
+                status=resp.status_code,
+                latency_ms=1000 * (time.perf_counter() - t0),
+                in_tokens=tin,
+                out_tokens=tout,
+                cost_usd=cost_of(model or "", u, prices) if u else None,
+            )
             return resp
         how = request.headers.get("x-vega-context") or context
         if how not in CONTEXTS:
@@ -759,9 +769,19 @@ def create_app(
             resp = await passthrough(request, api, path, raw)
             resp.headers["x-vega-unread"] = repr(e)[:200].replace("\n", " ")
             tin, tout, u = usage_of(api, resp.body)
-            note(request, tenant, api=api, model=model, source="passthrough", status=resp.status_code,
-                 latency_ms=1000 * (time.perf_counter() - t0), in_tokens=tin, out_tokens=tout,
-                 cost_usd=cost_of(model or "", u, prices) if u else None, escalated="unread")
+            note(
+                request,
+                tenant,
+                api=api,
+                model=model,
+                source="passthrough",
+                status=resp.status_code,
+                latency_ms=1000 * (time.perf_counter() - t0),
+                in_tokens=tin,
+                out_tokens=tout,
+                cost_usd=cost_of(model or "", u, prices) if u else None,
+                escalated="unread",
+            )
             return resp
         named = (how, None if chars == budget else chars)
         desk = await run_in_threadpool(
@@ -781,9 +801,20 @@ def create_app(
             t0 = time.perf_counter()
             resp = await passthrough(request, api, path, raw)
             tin, tout, u = usage_of(api, resp.body)
-            note(request, tenant, api=api, model=model, decision=desk.key, mode="off", source="passthrough",
-                 status=resp.status_code, latency_ms=1000 * (time.perf_counter() - t0), in_tokens=tin,
-                 out_tokens=tout, cost_usd=cost_of(model or "", u, prices) if u else None)
+            note(
+                request,
+                tenant,
+                api=api,
+                model=model,
+                decision=desk.key,
+                mode="off",
+                source="passthrough",
+                status=resp.status_code,
+                latency_ms=1000 * (time.perf_counter() - t0),
+                in_tokens=tin,
+                out_tokens=tout,
+                cost_usd=cost_of(model or "", u, prices) if u else None,
+            )
             return resp
         headers = forward_headers(request)
         ctx = {"model": spec["model"], "parse": anthropic_answers if api == "anthropic" else openai_answers}
@@ -818,14 +849,29 @@ def create_app(
         if why:
             vh["x-vega-escalated"] = ",".join(why)
         ms = 1000 * (time.perf_counter() - t0)
-        row = {"api": api, "model": spec["model"], "decision": desk.key, "mode": asked, "latency_ms": ms,
-               "confidence": min(confs) if confs else None, "escalated": ",".join(why) or None,
-               "read": vh["x-vega-read"]}
+        row = {
+            "api": api,
+            "model": spec["model"],
+            "decision": desk.key,
+            "mode": asked,
+            "latency_ms": ms,
+            "confidence": min(confs) if confs else None,
+            "escalated": ",".join(why) or None,
+            "read": vh["x-vega-read"],
+        }
         if ctx.get("resp") is not None:
             status, h, content = ctx["resp"]
             tin, tout, u = usage_of(api, content)
-            note(request, tenant, source="llm", status=status, in_tokens=tin, out_tokens=tout,
-                 cost_usd=cost_of(spec["model"] or "", u, prices) if u else None, **row)
+            note(
+                request,
+                tenant,
+                source="llm",
+                status=status,
+                in_tokens=tin,
+                out_tokens=tout,
+                cost_usd=cost_of(spec["model"] or "", u, prices) if u else None,
+                **row,
+            )
             return Response(content, status, headers=h | vh | {"x-vega-source": "llm"})
         if ctx.get("error"):
             note(request, tenant, source="error", status=502, **row)
@@ -836,8 +882,15 @@ def create_app(
             )
         obj = desk.written(out)
         c = desk.cost.get(spec["model"])
-        note(request, tenant, source="vega", status=200, cost_usd=0.0,
-             saved_usd=(c[1] / c[0]) if c and c[0] else None, **row)
+        note(
+            request,
+            tenant,
+            source="vega",
+            status=200,
+            cost_usd=0.0,
+            saved_usd=(c[1] / c[0]) if c and c[0] else None,
+            **row,
+        )
         return JSONResponse(synthesized(api, spec["model"], obj), headers=vh | {"x-vega-source": "vega"})
 
     @app.get("/health")
@@ -955,8 +1008,13 @@ def create_app(
         return {"ok": True, "id": key_id}
 
     @app.get("/v1/vega/admin/usage")
-    def admin_usage(request: Request, owner: str | None = None, days: int = 30, since: float | None = None,
-                    until: float | None = None):
+    def admin_usage(
+        request: Request,
+        owner: str | None = None,
+        days: int = 30,
+        since: float | None = None,
+        until: float | None = None,
+    ):
         """The last `days`, or exactly [since, until) in unix seconds: a billing period."""
         admin(request)
         return ledger.usage(owner=owner, days=days, since=since, until=until)
@@ -996,8 +1054,14 @@ def create_app(
         return ledger.activity(days=days)
 
     @app.get("/v1/vega/admin/logs")
-    def admin_logs(request: Request, owner: str | None = None, limit: int = 100, before: int | None = None,
-                   decision: str | None = None, source: str | None = None):
+    def admin_logs(
+        request: Request,
+        owner: str | None = None,
+        limit: int = 100,
+        before: int | None = None,
+        decision: str | None = None,
+        source: str | None = None,
+    ):
         admin(request)
         got = ledger.logs(owner=owner, limit=limit, before=before, decision=decision, source=source)
         return {"events": got}
@@ -1080,8 +1144,10 @@ def run(a):
 
     keys = load_keys(a.keys_file)
     if not keys and not os.environ.get("VEGA_ADMIN_TOKEN") and a.host not in ("127.0.0.1", "localhost"):
-        raise SystemExit("set VEGA_PROXY_KEYS, --keys-file or VEGA_ADMIN_TOKEN (keys made through the admin "
-                         "API); without keys the proxy is for 127.0.0.1 only")
+        raise SystemExit(
+            "set VEGA_PROXY_KEYS, --keys-file or VEGA_ADMIN_TOKEN (keys made through the admin "
+            "API); without keys the proxy is for 127.0.0.1 only"
+        )
     prices = json.loads(os.environ.get("VEGA_PROXY_PRICES", "{}"))
     app = create_app(
         Reader.load(a.model, a.device),

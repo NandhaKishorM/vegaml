@@ -14,17 +14,27 @@
 >
 > **[Start free at platform.embedding.in →](https://platform.embedding.in)** · [Docs](https://platform.embedding.in/docs) · [embedding.in](https://embedding.in)
 >
-> Or run it on your own servers: `pip install "vegaml-learn[proxy]"`, then `python -m vegaml_learn proxy` (free for noncommercial use; [commercial licence](https://embedding.in)).
+> Or run it on your own servers: `pip install "vegaml-learn[proxy]"`, then `python -m vegaml_learn proxy` (noncommercial licence; [commercial use needs a paid licence](https://embedding.in/licence)).
+
+> [!IMPORTANT]
+> **Two licences in this repository. Check before you ship.**
+>
+> - **vegaml** (`pip install vegaml`: the decision engine, heads, calibration, policies, serving) is **Apache 2.0**. Use it commercially, free.
+> - **vegaml-learn** (`pip install vegaml-learn`: continuous learning, landscape learning, the teacher loop, the vega Proxy; everything in [`learn/`](learn/)) is **noncommercial only**, under the [PolyForm Noncommercial License 1.0.0](learn/LICENSE). Research, study, personal projects, and use by charities, schools and government are free.
+> - **Using vegaml-learn in a company, a product or a paid service needs a commercial licence.** That covers `Learner`, `Escalator`, `python -m vegaml_learn proxy`, and `laya.Learner`. Details and prices: [embedding.in/licence](https://embedding.in/licence). Quote: [nandakishor@embedding.in](mailto:nandakishor@embedding.in).
+>
+> The learner that shipped inside vegaml 0.17 to 0.19 stays Apache 2.0. Everything newer, including landscape learning, is in vegaml-learn.
 
 <p align="center"><a href="https://github.com/sponsors/NandhaKishorM"><img src="https://img.shields.io/badge/Sponsor-vegaml-ea4aaa?logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub" /></a></p>
 
-<p align="center">vegaml is free and open source. If it helps you, <a href="https://github.com/sponsors/NandhaKishorM">sponsor the work on GitHub</a>.</p>
+<p align="center">vegaml is free and open source (Apache 2.0); vegaml-learn is free for noncommercial use. If it helps you, <a href="https://github.com/sponsors/NandhaKishorM">sponsor the work on GitHub</a>.</p>
 
 <p align="center"><img src="https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega-valleys.svg" width="900" alt="How it decides: a frozen LLM reads the message once, every answer is a valley, and a particle rolls and settles in one. Where it settles is the answer, with its probability, conformal set, abstain and unbound flags." /></p>
 
-**What vega does.** vegaml is open source under Apache 2.0. Continuous learning, the teacher loop and the vega Proxy are in a separate package, [vegaml-learn](learn/README.md), which is free for noncommercial use.
+**What vega does.** vegaml is open source under Apache 2.0. Continuous learning, landscape learning, the teacher loop and the vega Proxy are in a separate package, [vegaml-learn](learn/README.md), which is free for noncommercial use only.
 
-- **Continuous learning has its own package, new in 0.20.** `pip install vegaml-learn` for `Learner`, `Escalator` and the vega Proxy. It is licensed under [PolyForm Noncommercial 1.0.0](learn/LICENSE): free for personal, research and nonprofit use; commercial use needs a licence from [Embedding Space](https://embedding.in). Existing imports (`from vegaml import Learner`, `vegaml.learn`, `python -m vegaml.learn`) keep working once it is installed. The learner in vegaml 0.17 to 0.19 stays Apache 2.0.
+- **Landscape learning, new in 0.20 (vegaml-learn, noncommercial, opt-in).** `VEGA_LEARN_HEAD=landscape` makes the learner learn by reshaping the energy landscape itself: every answer gets a well placed from its confirmed examples, and the answer is the well the input settles in. It is level with the default head on questions with a few answers, behind it on questions with 60 or more answers until it has several hundred examples, and faster to fit past about a thousand examples (0.6 s against 4.8 s at 3,000). [Details](learn/README.md#landscape-learning).
+- **Continuous learning has its own package and licence, new in 0.20.** `pip install vegaml-learn` for `Learner`, `Escalator` and the vega Proxy. It is free for noncommercial use; commercial use needs a [licence](https://embedding.in/licence). Existing imports (`from vegaml import Learner`, `vegaml.learn`, `python -m vegaml.learn`) keep working once it is installed.
 
 - **Text, images, audio and video.** `v.decide(text)`, `v.decide_image(img)`, `v.decide_audio(wav)` and `v.decide_video(clip)` give the same typed answers for each.
 - **73,728 tokens of context.** Whole contracts, threads and logs in one read.
@@ -526,7 +536,7 @@ name; the loader remaps them, so an older checkpoint still loads with its predic
 ## Continuous learning
 
 In the separate package [vegaml-learn](learn/README.md): `pip install vegaml-learn`. Free for noncommercial use
-(PolyForm Noncommercial 1.0.0); commercial use needs a licence from [Embedding Space](https://embedding.in).
+(PolyForm Noncommercial 1.0.0); commercial use needs a [paid licence](https://embedding.in/licence) (nandakishor@embedding.in).
 
 ```python
 from vegaml_learn import Learner
@@ -854,4 +864,4 @@ pickle. Tests enforce that allow-list, and CI fails on any `pickle`, `torch.load
 
 vegaml is Apache 2.0. The `learn/` folder (the vegaml-learn package: continuous learning, the teacher loop
 and the vega Proxy) is under the PolyForm Noncommercial License 1.0.0, see [learn/LICENSE](learn/LICENSE);
-commercial use of it needs a licence from [Embedding Space](https://embedding.in).
+commercial use of it needs a paid licence: [embedding.in/licence](https://embedding.in/licence), or write to nandakishor@embedding.in.

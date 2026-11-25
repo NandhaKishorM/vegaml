@@ -1,8 +1,9 @@
 """Continuous learning moved to its own package, vegaml-learn, in vegaml 0.20.
 
 vegaml-learn is licensed under the PolyForm Noncommercial License 1.0.0: free for noncommercial use;
-commercial use needs a licence from Embedding Space (https://embedding.in). vegaml itself stays
-Apache 2.0. Install it with `pip install vegaml-learn` (`vegaml-learn[serve]` for the REST server,
+commercial use needs a licence from Embedding Space (https://embedding.in/licence,
+nandakishor@embedding.in). vegaml itself stays Apache 2.0. Install it with `pip install vegaml-learn`
+(`vegaml-learn[serve]` for the REST server,
 `[proxy]` for the vega Proxy, `[claude]` for claude_teacher).
 
 Once it is installed, `vegaml.learn` and its submodules (`vegaml.learn.proxy`, ...) are the same
@@ -17,7 +18,8 @@ import sys
 MOVED = (
     "Continuous learning (Learner, Escalator, the vega Proxy) moved to its own package in vegaml 0.20. "
     "Install it with `pip install vegaml-learn`. It is free for noncommercial use (PolyForm Noncommercial "
-    "1.0.0); commercial use needs a licence from Embedding Space, https://embedding.in."
+    "1.0.0); commercial use needs a licence from Embedding Space: https://embedding.in/licence or "
+    "nandakishor@embedding.in."
 )
 
 try:

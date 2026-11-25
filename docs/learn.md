@@ -2,8 +2,8 @@
 
 > **Separate package, noncommercial licence.** Continuous learning, the teacher loop and the vega Proxy
 > are in [vegaml-learn](../learn/README.md): `pip install vegaml-learn`. It is free for noncommercial use
-> under the [PolyForm Noncommercial License 1.0.0](../learn/LICENSE); commercial use needs a licence from
-> [Embedding Space](https://embedding.in). vegaml itself stays Apache 2.0, and the learner that shipped in
+> under the [PolyForm Noncommercial License 1.0.0](../learn/LICENSE); commercial use needs a paid licence:
+> [embedding.in/licence](https://embedding.in/licence), quote from nandakishor@embedding.in. vegaml itself stays Apache 2.0, and the learner that shipped in
 > vegaml 0.17 to 0.19 keeps the Apache 2.0 licence it was released under. Imports written for 0.19
 > (`from vegaml import Learner`, `vegaml_learn`) keep working once vegaml-learn is installed.
 

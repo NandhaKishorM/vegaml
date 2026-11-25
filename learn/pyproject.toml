@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vegaml-learn"
 version = "0.20.0"
-description = "Continuous learning for vega: a Learner that learns from confirmed answers, a teacher loop, and the vega Proxy. Free for noncommercial use."
+description = "Continuous learning for vega (landscape learning, teacher loop, vega Proxy). NONCOMMERCIAL licence: commercial use needs a paid licence, embedding.in/licence."
 readme = "README.md"
 requires-python = ">=3.10"
 # Noncommercial only. vegaml itself is Apache 2.0; this package is not.
@@ -40,6 +40,7 @@ vegaml-learn = "vegaml_learn.serve:main"
 
 [project.urls]
 Homepage = "https://embedding.in"
+"Commercial licence" = "https://embedding.in/licence"
 Repository = "https://github.com/NandhaKishorM/vegaml/tree/main/learn"
 Issues = "https://github.com/NandhaKishorM/vegaml/issues"
 

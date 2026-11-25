@@ -1,14 +1,24 @@
 # vegaml-learn
 
-Continuous learning for [vega](https://github.com/NandhaKishorM/vegaml): a `Learner` that answers from day one and learns from every answer you confirm, an `Escalator` that sends only what vega is unsure of to a teacher and learns from the reply, and the vega Proxy that sits in front of an LLM API and learns your decisions from it.
+Continuous learning for [vega](https://github.com/NandhaKishorM/vegaml), **free for noncommercial use only** (see [Licence](#licence-noncommercial-only)): a `Learner` that answers from day one and learns from every answer you confirm, an `Escalator` that sends only what vega is unsure of to a teacher and learns from the reply, and the vega Proxy that sits in front of an LLM API and learns your decisions from it.
 
-## Licence
+## Licence: noncommercial only
 
-**Free for noncommercial use.** vegaml-learn is licensed under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) (see [LICENSE](https://github.com/NandhaKishorM/vegaml/blob/main/learn/LICENSE)). Personal projects, research, study, and use by charities, schools, public research bodies and government are all covered.
+> **Read this before you build on it.** vegaml-learn is **not** open source in the Apache or MIT sense. It is licensed under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) ([LICENSE](https://github.com/NandhaKishorM/vegaml/blob/main/learn/LICENSE)).
 
-**Commercial use needs a licence** from Embedding Space: [embedding.in](https://embedding.in). That includes using it inside a product, a paid service or a company's own operations.
+**Free:** personal projects, research, study and experiments, and use by charities, schools, public research bodies and government.
 
-vegaml itself, the decision engine this builds on, stays Apache 2.0. Versions of the learner that shipped inside vegaml 0.17.0 to 0.19.0 keep the Apache 2.0 licence they were released under.
+**Needs a paid commercial licence:** any use by or for a business. That includes running it inside a product or a paid service, using it in a company's own operations (support routing, sales, risk, back office), and offering it to customers as a hosted service. It covers everything in this package: `Learner`, landscape learning, `Escalator` and the teachers, the REST server and the vega Proxy, and `laya.Learner`, which loads this package.
+
+Prices and terms: [embedding.in/licence](https://embedding.in/licence). For a quote, write to [nandakishor@embedding.in](mailto:nandakishor@embedding.in).
+
+vegaml itself, the decision engine this builds on, stays Apache 2.0. The learner that shipped inside vegaml 0.17.0 to 0.19.0 keeps the Apache 2.0 licence it was released under.
+
+## Landscape learning
+
+New in 0.20, opt-in with `VEGA_LEARN_HEAD=landscape`. Each answer gets a well in vega's energy landscape, placed from its confirmed examples; the answer is the well the input settles in, with a temperature fitted on held-out examples. Nothing is iterated and no fit grows with the examples stored.
+
+Measured against the default head on the same features: level on questions with a few answers (12 public tasks and model routing, within about a point from 100 examples on) and on ten sales questions with the vega 4B; behind by 2 to 9 points on questions with 60 to 100 answers until it has several hundred examples; faster to fit only past about a thousand examples (0.6 s against 4.8 s at 3,000). Use it for long-running learners on questions with few answers. What a learner has stored works with both, so switching back loses nothing.
 
 ## Install
 
