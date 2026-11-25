@@ -1,46 +1,68 @@
-<p align="left">
-  <img src="assets/vega-icon.svg" width="68" height="68" alt="Vega: a particle at rest in the deeper of two wells" />
+<p align="center">
+  <img src="https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega-icon.svg" width="72" height="72" alt="Vega: a particle at rest in the deeper of two wells" />
 </p>
 
-# vegaml
+<h1 align="center">vegaml</h1>
 
-> **New: vega Proxy. Cut your LLM bill in half.**
->
-> Put vega in front of the LLM you already use (OpenAI or Anthropic SDK). It learns your decisions from your LLM, then makes the routine ones itself in about 50 ms and sends the rest through, unchanged. Two lines of code. 10,000 decisions a month free.
->
-> ```python
-> client = OpenAI(base_url="https://…/proxy/v1", default_headers={"x-vega-key": "vg_…"})
-> ```
->
-> **[Start free at platform.embedding.in →](https://platform.embedding.in)** · [Docs](https://platform.embedding.in/docs) · [embedding.in](https://embedding.in)
->
-> Or run it on your own servers: `pip install "vegaml-learn[proxy]"`, then `python -m vegaml_learn proxy` (noncommercial licence; [commercial use needs a paid licence](https://embedding.in/licence)).
+<p align="center"><b>Typed decisions from a frozen language model and a small physics engine.</b><br/>
+Calibrated probabilities, an honest "I should not decide", 73k tokens of context, text, images, audio and video.</p>
 
-> [!IMPORTANT]
-> **Two licences in this repository. Check before you ship.**
->
-> - **vegaml** (`pip install vegaml`: the decision engine, heads, calibration, policies, serving) is **Apache 2.0**. Use it commercially, free.
-> - **vegaml-learn** (`pip install vegaml-learn`: continuous learning, landscape learning, the teacher loop, the vega Proxy; everything in [`learn/`](learn/)) is **noncommercial only**, under the [PolyForm Noncommercial License 1.0.0](learn/LICENSE). Research, study, personal projects, and use by charities, schools and government are free.
-> - **Using vegaml-learn in a company, a product or a paid service needs a commercial licence.** That covers `Learner`, `Escalator`, `python -m vegaml_learn proxy`, and `laya.Learner`. Details and prices: [embedding.in/licence](https://embedding.in/licence). Quote: [nandakishor@embedding.in](mailto:nandakishor@embedding.in).
->
-> The learner that shipped inside vegaml 0.17 to 0.19 stays Apache 2.0. Everything newer, including landscape learning, is in vegaml-learn.
+<p align="center">
+  <a href="https://pypi.org/project/vegaml/"><img src="https://img.shields.io/pypi/v/vegaml?label=vegaml&color=3775A9" alt="vegaml on PyPI" /></a>
+  <a href="https://github.com/NandhaKishorM/vegaml/blob/main/LICENSE"><img src="https://img.shields.io/badge/vegaml-Apache%202.0-green" alt="vegaml: Apache 2.0" /></a>
+  <a href="https://github.com/NandhaKishorM/vegaml/blob/main/learn/LICENSE"><img src="https://img.shields.io/badge/vegaml--learn-noncommercial-orange" alt="vegaml-learn: noncommercial" /></a>
+  <a href="https://github.com/sponsors/NandhaKishorM"><img src="https://img.shields.io/badge/Sponsor-ea4aaa?logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub" /></a>
+</p>
 
-<p align="center"><a href="https://github.com/sponsors/NandhaKishorM"><img src="https://img.shields.io/badge/Sponsor-vegaml-ea4aaa?logo=githubsponsors&logoColor=white" alt="Sponsor on GitHub" /></a></p>
-
-<p align="center">vegaml is free and open source (Apache 2.0); vegaml-learn is free for noncommercial use. If it helps you, <a href="https://github.com/sponsors/NandhaKishorM">sponsor the work on GitHub</a>.</p>
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="https://github.com/NandhaKishorM/vegaml/blob/main/docs/index.md">Docs</a> ·
+  <a href="#benchmarks-at-a-glance">Benchmarks</a> ·
+  <a href="https://platform.embedding.in">Hosted proxy</a> ·
+  <a href="https://embedding.in/licence">Commercial licence</a>
+</p>
 
 <p align="center"><img src="https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega-valleys.svg" width="900" alt="How it decides: a frozen LLM reads the message once, every answer is a valley, and a particle rolls and settles in one. Where it settles is the answer, with its probability, conformal set, abstain and unbound flags." /></p>
 
-**What vega does.** vegaml is open source under Apache 2.0. Continuous learning, landscape learning, the teacher loop and the vega Proxy are in a separate package, [vegaml-learn](learn/README.md), which is free for noncommercial use only.
+```bash
+pip install vegaml
+```
 
-- **Landscape learning, new in 0.20 (vegaml-learn, noncommercial, opt-in).** `VEGA_LEARN_HEAD=landscape` makes the learner learn by reshaping the energy landscape itself: every answer gets a well placed from its confirmed examples, and the answer is the well the input settles in. It is level with the default head on questions with a few answers, behind it on questions with 60 or more answers until it has several hundred examples, and faster to fit past about a thousand examples (0.6 s against 4.8 s at 3,000). [Details](learn/README.md#landscape-learning).
-- **Continuous learning has its own package and licence, new in 0.20.** `pip install vegaml-learn` for `Learner`, `Escalator` and the vega Proxy. It is free for noncommercial use; commercial use needs a [licence](https://embedding.in/licence). Existing imports (`from vegaml import Learner`, `vegaml.learn`, `python -m vegaml.learn`) keep working once it is installed.
+```python
+import vegaml
+
+v = vegaml.load()                                   # the 0.8B reader; vegaml.load("4b") for the 4B
+out = v.decide("Third notice. Pay the overdue invoice now.",
+               {"team": {"type": "choice", "instructions": "Which team should handle this?",
+                         "criteria": {"billing": "payments and invoices", "technical": "product faults"}}})
+out["answers"]["team"]["choice"]                    # 'billing', with probs, a conformal set and abstain
+```
+
+## Two packages, two licences
+
+| Package | What is in it | Licence |
+|---|---|---|
+| **vegaml** (`pip install vegaml`) | The decision engine, heads fitted on your labels, calibration, policies, images, audio, video, serving | **Apache 2.0.** Free for any use, including commercial. |
+| **vegaml-learn** (`pip install vegaml-learn`, the [`learn/`](https://github.com/NandhaKishorM/vegaml/tree/main/learn) folder) | Continuous learning, landscape learning, the teacher loop, the vega Proxy | **Noncommercial only** ([PolyForm Noncommercial 1.0.0](https://github.com/NandhaKishorM/vegaml/blob/main/learn/LICENSE)). Free for research, study, personal projects, charities, schools and government. |
+
+> [!IMPORTANT]
+> **Using vegaml-learn in a company, a product or a paid service needs a commercial licence.** That covers `Learner`, `Escalator`, `python -m vegaml_learn proxy` and `laya.Learner`. Prices and how to buy: [embedding.in/licence](https://embedding.in/licence). Quote: [nandakishor@embedding.in](mailto:nandakishor@embedding.in). The learner that shipped inside vegaml 0.17 to 0.19 stays Apache 2.0.
+
+## What it does
 
 - **Text, images, audio and video.** `v.decide(text)`, `v.decide_image(img)`, `v.decide_audio(wav)` and `v.decide_video(clip)` give the same typed answers for each.
 - **73,728 tokens of context.** Whole contracts, threads and logs in one read.
 - **Abstain and unbound.** Every engine answer carries a calibrated probability, a conformal answer set, an `abstain` flag when it should not commit, and an `unbound` flag when the input sits far from every answer (likely off-distribution).
 - **Physics, not text generation.** Each candidate answer is a well in an energy landscape; the input becomes a particle that rolls and settles in one of them. Deterministic, constant cost, nothing generated. See [How it works](#how-it-works).
 - **Any LLM as the reader.** vega-U is one 14.3M engine over any frozen reader from 0.8B to 27B, and `vegaml.attach()` connects your own.
+- **Keeps learning (vegaml-learn).** A `Learner` answers from day one and learns from every answer you confirm; an `Escalator` asks a teacher only when vega is unsure; the vega Proxy does both in front of the OpenAI or Anthropic API. See [Continuous learning](#continuous-learning).
+
+**Hosted:** the vega Proxy runs at [platform.embedding.in](https://platform.embedding.in), with 10,000 decisions a month free. Point your OpenAI or Anthropic client at it and it learns your decisions from your LLM, then answers the routine ones itself in about 50 ms.
+
+## What's new
+
+- **Landscape learning, new in 0.20 (vegaml-learn, noncommercial, opt-in).** `VEGA_LEARN_HEAD=landscape` makes the learner learn by reshaping the energy landscape itself: every answer gets a well placed from its confirmed examples, and the answer is the well the input settles in. It is level with the default head on questions with a few answers, behind it on questions with 60 or more answers until it has several hundred examples, and faster to fit past about a thousand examples (0.6 s against 4.8 s at 3,000). [Details](learn/README.md#landscape-learning).
+- **Continuous learning has its own package and licence, new in 0.20.** `pip install vegaml-learn` for `Learner`, `Escalator` and the vega Proxy. It is free for noncommercial use; commercial use needs a [licence](https://embedding.in/licence). Existing imports (`from vegaml import Learner`, `vegaml.learn`, `python -m vegaml.learn`) keep working once it is installed.
 - **vega Proxy, new in 0.19 (vegaml-learn).** `python -m vegaml_learn proxy` sits in front of the OpenAI or Anthropic API. Requests that ask for structured choices or yes/no fields are decisions: your LLM answers them while vega learns, and vega answers the ones it has earned (95% agreement over 30 checks, per question; 5% still checked forever). Everything else passes through. Every request is recorded (who answered, model, time, tokens, cost, savings, confidence; never the content), with per-user keys and an admin API. Measured: about half of a Claude or GPT decision bill saved at steady state. Hosted at [platform.embedding.in](https://platform.embedding.in).
 - **Corrections and calibration, new in 0.19 (vegaml-learn).** `learner.feedback(record, answers, correction=True)` replaces the earlier answer for the same record and is never held as drift. `learner.calibrate(examples)` fits a temperature per question, so a confidence of 0.9 means about 90% right; it is saved with the learner and in its bundle, and `Escalator(line="calibrated")` starts from the calibrated bars. Learners also read images, audio (via its transcript) and long conversations (`context="full" | "recent" | "last"`).
 - **A teacher for what it is unsure of, new in 0.18 (vegaml-learn).** `vegaml_learn.Escalator(learner, teacher)` sends only what vega abstains on, finds unbound or is not yet sure of to a teacher (a review queue, a rules engine, a model you serve with `vllm_teacher()`, or Claude via `claude_teacher()`), serves the teacher's answer and learns from it. With Claude Opus 5 as the teacher on a 3,000-record intent stream, vega alone went from 35% to 85% right and the share sent to the teacher fell from 100% to 43%; with Qwen3.8-27B served on your own GPU instead, 35% to 79% at no API cost. On 12 public tasks it learned the teacher's policy on 7 with no labels from anyone. [Guide](docs/learn.md#a-teacher-for-what-it-is-unsure-of).
