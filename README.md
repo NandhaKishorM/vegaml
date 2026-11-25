@@ -22,8 +22,6 @@ Calibrated probabilities, an honest "I should not decide", 73k tokens of context
   <a href="https://embedding.in/licence">Commercial licence</a>
 </p>
 
-<p align="center"><img src="https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega-valleys.svg" width="900" alt="How it decides: a frozen LLM reads the message once, every answer is a valley, and a particle rolls and settles in one. Where it settles is the answer, with its probability, conformal set, abstain and unbound flags." /></p>
-
 ```bash
 pip install vegaml
 ```
