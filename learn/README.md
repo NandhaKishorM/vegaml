@@ -10,7 +10,7 @@ Continuous learning for [vega](https://github.com/NandhaKishorM/vegaml), **free 
 
 **Needs a paid commercial licence:** any use by or for a business. That includes running it inside a product or a paid service, using it in a company's own operations (support routing, sales, risk, back office), and offering it to customers as a hosted service. It covers everything in this package: `Learner`, landscape learning, `Escalator` and the teachers, the REST server and the vega Proxy, and `laya.Learner`, which loads this package.
 
-Prices and terms: [embedding.in/licence](https://embedding.in/licence). For a quote, write to [nandakishor@embedding.in](mailto:nandakishor@embedding.in).
+Terms, and a quote for your company: [embedding.in/licence](https://embedding.in/licence). For a quote, write to [nandakishor@embedding.in](mailto:nandakishor@embedding.in).
 
 vegaml itself, the decision engine this builds on, stays Apache 2.0. The learner that shipped inside vegaml 0.17.0 to 0.19.0 keeps the Apache 2.0 licence it was released under.
 
