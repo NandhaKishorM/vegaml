@@ -1,6 +1,6 @@
 """vega Proxy: vega in front of an LLM API. An app changes its base URL and nothing else.
 
-    python -m vegaml.learn proxy --host 0.0.0.0 --port 8890 --state ./vega-proxy
+    python -m vegaml_learn proxy --host 0.0.0.0 --port 8890 --state ./vega-proxy
 
     client = anthropic.Anthropic(base_url="http://localhost:8890", default_headers={"x-vega-key": KEY})
     client = openai.OpenAI(base_url="http://localhost:8890/v1", default_headers={"x-vega-key": KEY})
@@ -18,6 +18,10 @@ Modes, per request (x-vega-mode header) or per decision (POST /v1/vega/mode):
     shadow  the LLM answers everything; vega answers alongside, learns, and is measured
     vega    vega answers everything and the LLM is never called
     off     plain passthrough
+
+Limits: POST /v1/vega/admin/limits {"owner": id, "vega_limit": n} caps how many decisions vega answers for an
+owner per calendar month. Past the cap nothing is refused: the LLM answers every decision (x-vega-limit:
+reached) and vega keeps reading alongside, so what it learned is ready when the cap lifts.
 
 How sure vega must be, per field: x-vega-trust: topic=0.85,route=0.9 (or POST /v1/vega/trust) sets the
 share of vega's answers that must agree with the LLM before vega answers that field alone; fields left
@@ -445,6 +449,7 @@ class Desk:
                 "escalator": self.esc.state(),
             }
             self._since_save = 0
+        os.makedirs(self.dir, exist_ok=True)  # a folder removed under a running proxy must not fail a request
         tmp = os.path.join(self.dir, "desk.json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -465,6 +470,7 @@ class Desk:
                 q: {
                     "options": len(self.questions[q].get("criteria") or {}),
                     "readout": st["questions"][q]["readout"],
+                    "learner": st["questions"][q].get("learner"),
                     "cross_validated_accuracy": st["questions"][q]["cross_validated_accuracy"],
                     "line": round(rep["line"][q], 4),
                     "trust": rep["trust"][q],
@@ -507,10 +513,12 @@ def create_app(
     budget=DEFAULT_BUDGET,
     ledger=None,
     admin_token=None,
+    model_name=None,
+    shared=0.0,
 ):
     """keys: {vega key: tenant}; None or {} (and no key in the ledger) lets anyone in as tenant "default"
     (local use only). transport: an httpx transport for the upstream calls (tests).
-    ledger: a vegaml.learn.ledger.Ledger (or a path) recording every request and holding keys made through
+    ledger: a vegaml_learn.ledger.Ledger (or a path) recording every request and holding keys made through
     the admin API; default <state>/ledger.db. admin_token: the bearer token for /v1/vega/admin/* (default
     VEGA_ADMIN_TOKEN; unset, those routes answer 404)."""
     try:
@@ -520,14 +528,14 @@ def create_app(
         from starlette.background import BackgroundTask
         from starlette.concurrency import run_in_threadpool
     except ImportError as e:
-        raise SystemExit("the proxy needs its extras: pip install 'vegaml[proxy]' (%s)" % e) from e
+        raise SystemExit("the proxy needs its extras: pip install 'vegaml-learn[proxy]' (%s)" % e) from e
     if mode not in MODES:
         raise ValueError("mode is one of %s" % (MODES,))
     from .ledger import Ledger
 
     os.makedirs(state, exist_ok=True)
     if ledger is None or isinstance(ledger, str):
-        ledger = Ledger(ledger or os.path.join(state, "ledger.db"))
+        ledger = Ledger(ledger or os.path.join(state, "ledger.db"), shared=shared)
     admin_token = admin_token if admin_token is not None else os.environ.get("VEGA_ADMIN_TOKEN", "")
     prices = dict(PRICES, **(prices or {}))
     hashed = {hashlib.sha256(k.encode()).hexdigest(): t for k, t in (keys or {}).items()}
@@ -549,7 +557,15 @@ def create_app(
     app = FastAPI(title="vega Proxy", docs_url=None, redoc_url=None, lifespan=lifespan)
 
     def tenant_of(request):
-        """The tenant a request belongs to: a key from VEGA_PROXY_KEYS, or one made through the admin API."""
+        """The tenant a request belongs to: a key from VEGA_PROXY_KEYS, or one made through the admin API.
+        A dashboard's server can also act for one of its users without holding their key: x-vega-admin (the
+        admin token) with x-vega-as (the user). Both are x-vega-* headers, so neither is ever sent on."""
+        boss, who = request.headers.get("x-vega-admin") or "", request.headers.get("x-vega-as") or ""
+        if boss or who:
+            if not (admin_token and boss and hmac.compare_digest(boss, admin_token) and _NAME.fullmatch(who)):
+                raise HTTPException(401, "x-vega-admin and x-vega-as need the admin token and a user id")
+            request.state.key_id = None
+            return who
         k = request.headers.get("x-vega-key") or ""
         if k:
             t = hashed.get(hashlib.sha256(k.encode()).hexdigest())
@@ -719,9 +735,18 @@ def create_app(
             streamed = bool((body or {}).get("stream")) if isinstance(body, dict) else False
             resp = await passthrough(request, api, path, raw, stream=streamed)
             tin, tout, u = (None, None, {}) if streamed else usage_of(api, resp.body)
-            note(request, tenant, api=api, model=model, source="passthrough", status=resp.status_code,
-                 latency_ms=1000 * (time.perf_counter() - t0), in_tokens=tin, out_tokens=tout,
-                 cost_usd=cost_of(model or "", u, prices) if u else None)
+            note(
+                request,
+                tenant,
+                api=api,
+                model=model,
+                source="passthrough",
+                status=resp.status_code,
+                latency_ms=1000 * (time.perf_counter() - t0),
+                in_tokens=tin,
+                out_tokens=tout,
+                cost_usd=cost_of(model or "", u, prices) if u else None,
+            )
             return resp
         how = request.headers.get("x-vega-context") or context
         if how not in CONTEXTS:
@@ -744,9 +769,19 @@ def create_app(
             resp = await passthrough(request, api, path, raw)
             resp.headers["x-vega-unread"] = repr(e)[:200].replace("\n", " ")
             tin, tout, u = usage_of(api, resp.body)
-            note(request, tenant, api=api, model=model, source="passthrough", status=resp.status_code,
-                 latency_ms=1000 * (time.perf_counter() - t0), in_tokens=tin, out_tokens=tout,
-                 cost_usd=cost_of(model or "", u, prices) if u else None, escalated="unread")
+            note(
+                request,
+                tenant,
+                api=api,
+                model=model,
+                source="passthrough",
+                status=resp.status_code,
+                latency_ms=1000 * (time.perf_counter() - t0),
+                in_tokens=tin,
+                out_tokens=tout,
+                cost_usd=cost_of(model or "", u, prices) if u else None,
+                escalated="unread",
+            )
             return resp
         named = (how, None if chars == budget else chars)
         desk = await run_in_threadpool(
@@ -756,13 +791,30 @@ def create_app(
         if bar:
             apply_trust(desk, parse_trust(bar))
         use = want or desk.mode
+        asked = use
+        # the owner's vega answers for the period are used up: the LLM answers every decision and vega only
+        # reads alongside, so nothing is refused and what it has learned is kept for when the limit lifts
+        capped = use in ("live", "vega") and ledger.over_limit(tenant)
+        if capped:
+            use = "shadow"
         if use == "off":
             t0 = time.perf_counter()
             resp = await passthrough(request, api, path, raw)
             tin, tout, u = usage_of(api, resp.body)
-            note(request, tenant, api=api, model=model, decision=desk.key, mode="off", source="passthrough",
-                 status=resp.status_code, latency_ms=1000 * (time.perf_counter() - t0), in_tokens=tin,
-                 out_tokens=tout, cost_usd=cost_of(model or "", u, prices) if u else None)
+            note(
+                request,
+                tenant,
+                api=api,
+                model=model,
+                decision=desk.key,
+                mode="off",
+                source="passthrough",
+                status=resp.status_code,
+                latency_ms=1000 * (time.perf_counter() - t0),
+                in_tokens=tin,
+                out_tokens=tout,
+                cost_usd=cost_of(model or "", u, prices) if u else None,
+            )
             return resp
         headers = forward_headers(request)
         ctx = {"model": spec["model"], "parse": anthropic_answers if api == "anthropic" else openai_answers}
@@ -784,22 +836,42 @@ def create_app(
         vh = {
             "x-vega-decision": desk.key,
             "x-vega-id": rid,
-            "x-vega-mode": use,
+            "x-vega-mode": asked,
             "x-vega-confidence": "%.4f" % (min(confs) if confs else 0.0),
             "x-vega-latency-ms": "%.1f" % (1000 * (time.perf_counter() - t0)),
             "x-vega-read": ",".join(sorted(set(rec.sources))) or rec.kind,
         }
+        if model_name:
+            vh["x-vega-model"] = model_name
+        if capped:
+            why = ["limit"]
+            vh["x-vega-limit"] = "reached"
         if why:
             vh["x-vega-escalated"] = ",".join(why)
         ms = 1000 * (time.perf_counter() - t0)
-        row = {"api": api, "model": spec["model"], "decision": desk.key, "mode": use, "latency_ms": ms,
-               "confidence": min(confs) if confs else None, "escalated": ",".join(why) or None,
-               "read": vh["x-vega-read"]}
+        row = {
+            "api": api,
+            "model": spec["model"],
+            "decision": desk.key,
+            "mode": asked,
+            "latency_ms": ms,
+            "confidence": min(confs) if confs else None,
+            "escalated": ",".join(why) or None,
+            "read": vh["x-vega-read"],
+        }
         if ctx.get("resp") is not None:
             status, h, content = ctx["resp"]
             tin, tout, u = usage_of(api, content)
-            note(request, tenant, source="llm", status=status, in_tokens=tin, out_tokens=tout,
-                 cost_usd=cost_of(spec["model"] or "", u, prices) if u else None, **row)
+            note(
+                request,
+                tenant,
+                source="llm",
+                status=status,
+                in_tokens=tin,
+                out_tokens=tout,
+                cost_usd=cost_of(spec["model"] or "", u, prices) if u else None,
+                **row,
+            )
             return Response(content, status, headers=h | vh | {"x-vega-source": "llm"})
         if ctx.get("error"):
             note(request, tenant, source="error", status=502, **row)
@@ -810,13 +882,20 @@ def create_app(
             )
         obj = desk.written(out)
         c = desk.cost.get(spec["model"])
-        note(request, tenant, source="vega", status=200, cost_usd=0.0,
-             saved_usd=(c[1] / c[0]) if c and c[0] else None, **row)
+        note(
+            request,
+            tenant,
+            source="vega",
+            status=200,
+            cost_usd=0.0,
+            saved_usd=(c[1] / c[0]) if c and c[0] else None,
+            **row,
+        )
         return JSONResponse(synthesized(api, spec["model"], obj), headers=vh | {"x-vega-source": "vega"})
 
     @app.get("/health")
     def health():
-        return {"ok": True, "decisions": len(desks), "checkpoint": reader.fingerprint()}
+        return {"ok": True, "decisions": len(desks), "checkpoint": reader.fingerprint(), "model": model_name}
 
     @app.post("/v1/messages")
     async def messages(request: Request):
@@ -886,8 +965,10 @@ def create_app(
 
     @app.get("/v1/vega/usage")
     def my_usage(request: Request, days: int = 30):
-        """Your own numbers: totals, a daily series, per decision and per model."""
-        return ledger.usage(owner=tenant_of(request), days=days)
+        """Your own numbers: totals, a daily series, per decision and per model, and your limit if you
+        have one."""
+        tenant = tenant_of(request)
+        return dict(ledger.usage(owner=tenant, days=days), limit=ledger.get_limit(tenant))
 
     @app.get("/v1/vega/logs")
     def my_logs(request: Request, limit: int = 100, before: int | None = None):
@@ -927,13 +1008,60 @@ def create_app(
         return {"ok": True, "id": key_id}
 
     @app.get("/v1/vega/admin/usage")
-    def admin_usage(request: Request, owner: str | None = None, days: int = 30):
+    def admin_usage(
+        request: Request,
+        owner: str | None = None,
+        days: int = 30,
+        since: float | None = None,
+        until: float | None = None,
+    ):
+        """The last `days`, or exactly [since, until) in unix seconds: a billing period."""
         admin(request)
-        return ledger.usage(owner=owner, days=days)
+        return ledger.usage(owner=owner, days=days, since=since, until=until)
+
+    @app.post("/v1/vega/admin/limits")
+    async def admin_set_limit(request: Request):
+        """{"owner": id, "vega_limit": n} caps vega's answers per calendar month (UTC); add "since" (unix
+        seconds) to count from a fixed moment instead; "vega_limit": null removes the cap. Past the cap the
+        LLM answers every decision: nothing is refused."""
+        admin(request)
+        try:
+            body = json.loads(await request.body())
+            owner = str(body["owner"])
+            cap = body["vega_limit"]
+            cap = None if cap is None else int(cap)
+            since = body.get("since")
+            since = None if since is None else float(since)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(400, 'send {"owner": <user id>, "vega_limit": <number or null>}') from None
+        if not _NAME.fullmatch(owner):
+            raise HTTPException(400, "owner is letters, digits, - _ . only")
+        if cap is not None and cap < 0:
+            raise HTTPException(400, "vega_limit is zero or more, or null for no limit")
+        ledger.set_limit(owner, cap, since)
+        return {"ok": True, "owner": owner, "limit": ledger.get_limit(owner)}
+
+    @app.get("/v1/vega/admin/limits")
+    def admin_limits(request: Request, owner: str | None = None):
+        admin(request)
+        return {"limits": [ledger.get_limit(owner)] if owner else ledger.limits()}
+
+    @app.get("/v1/vega/admin/activity")
+    def admin_activity(request: Request, days: int = 90):
+        """Per tenant per day, and every tenant's history in one line: what retention, active-user and funnel
+        charts are drawn from. No content, as everywhere in the ledger."""
+        admin(request)
+        return ledger.activity(days=days)
 
     @app.get("/v1/vega/admin/logs")
-    def admin_logs(request: Request, owner: str | None = None, limit: int = 100, before: int | None = None,
-                   decision: str | None = None, source: str | None = None):
+    def admin_logs(
+        request: Request,
+        owner: str | None = None,
+        limit: int = 100,
+        before: int | None = None,
+        decision: str | None = None,
+        source: str | None = None,
+    ):
         admin(request)
         got = ledger.logs(owner=owner, limit=limit, before=before, decision=decision, source=source)
         return {"events": got}
@@ -1016,8 +1144,10 @@ def run(a):
 
     keys = load_keys(a.keys_file)
     if not keys and not os.environ.get("VEGA_ADMIN_TOKEN") and a.host not in ("127.0.0.1", "localhost"):
-        raise SystemExit("set VEGA_PROXY_KEYS, --keys-file or VEGA_ADMIN_TOKEN (keys made through the admin "
-                         "API); without keys the proxy is for 127.0.0.1 only")
+        raise SystemExit(
+            "set VEGA_PROXY_KEYS, --keys-file or VEGA_ADMIN_TOKEN (keys made through the admin "
+            "API); without keys the proxy is for 127.0.0.1 only"
+        )
     prices = json.loads(os.environ.get("VEGA_PROXY_PRICES", "{}"))
     app = create_app(
         Reader.load(a.model, a.device),
@@ -1032,6 +1162,9 @@ def run(a):
         context=a.context,
         budget=a.context_chars,
         prices={k: tuple(v) for k, v in prices.items()},
+        ledger=a.ledger,
+        shared=a.ledger_shared,
+        model_name=a.model or "0.8b",  # vegaml's default checkpoint is the 0.8B
     )
     import uvicorn
 

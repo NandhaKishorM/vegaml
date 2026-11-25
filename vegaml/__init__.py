@@ -48,8 +48,8 @@ from .ttt import TTTHead
 # MODES and label_ids are imported by name from outside this package (the bench adapter, the tests),
 # so they belong in __all__ rather than merely being present as module attributes.
 __all__ = ["load", "Vega", "TTTHead", "Band", "fetch", "default_token", "label_ids", "MODES",
-           "attach", "calibrate", "load_policy", "fit_policy", "Learner", "__version__"]
-__version__ = "0.19.0"
+           "attach", "calibrate", "load_policy", "fit_policy", "__version__"]
+__version__ = "0.20.0"
 
 MODES = ("auto", "engine", "ttt", "both")
 
@@ -625,7 +625,8 @@ del _calibrate_fn, _importlib
 
 
 def __getattr__(name):
-    # Learner pulls in the continuous-learning module only when it is asked for.
+    # Learner lives in the separate vegaml-learn package since 0.20 (noncommercial licence); it is not in
+    # __all__, so `from vegaml import *` works without it. Asking for it by name explains how to install it.
     if name == "Learner":
         from .learn import Learner
 

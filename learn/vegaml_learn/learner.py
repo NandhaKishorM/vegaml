@@ -70,9 +70,12 @@ class Store:
                     last[k] = i
             keep_new = [i for i, k in enumerate(keys) if not k or last[k] == i]  # within the batch, last wins
             if len(keep_new) < len(keys):
-                X, y, e, keys = X[keep_new], [y[i] for i in keep_new], [e[i] for i in keep_new], [
-                    keys[i] for i in keep_new
-                ]
+                X, y, e, keys = (
+                    X[keep_new],
+                    [y[i] for i in keep_new],
+                    [e[i] for i in keep_new],
+                    [keys[i] for i in keep_new],
+                )
             replaced = set(last)
             keep = [i for i, k in enumerate(self.k[qid]) if not k or k not in replaced]
             if len(keep) < len(self.k[qid]):
@@ -139,16 +142,38 @@ class Store:
         return s
 
 
+def head_kind():
+    """Which learner turns confirmed examples into answers: "ttt" (the logistic head, the default) or "wells"
+    (landscape learning: one well per answer in the energy landscape, see wells.py). Chosen per process by
+    VEGA_LEARN_HEAD ("landscape" is accepted for "wells"), so a server can be switched and switched back
+    without touching what its learners have stored.
+
+    The head stays the default because landscape learning is not better everywhere: level with the head on
+    questions with a few answers, behind it on questions with 60 or more answers until it has seen several
+    hundred examples, and faster to fit only past about a thousand examples."""
+    kind = os.environ.get("VEGA_LEARN_HEAD", "ttt").strip().lower() or "ttt"
+    kind = "wells" if kind == "landscape" else kind
+    if kind not in ("ttt", "wells"):
+        raise ValueError("VEGA_LEARN_HEAD is %r; it can be ttt or wells (landscape)" % kind)
+    return kind
+
+
 def fit_head(question, X, y, e, folds=5):
     """{"head", "cv", "engine", "usable", "rows"} or None when there is nothing to fit."""
     from vegaml import label_ids
-    from vegaml.ttt import TTTHead
 
     labels = label_ids(question)
     if len(y) < 10 or len(set(y)) < 2:
         return None
     X = np.asarray(X, np.float32)
-    head = TTTHead(labels).fit(X, y)
+    if head_kind() == "wells":
+        from .wells import WellsHead
+
+        head = WellsHead(labels).fit(X, y)
+    else:
+        from vegaml.ttt import TTTHead
+
+        head = TTTHead(labels).fit(X, y)
     cv = head.cross_val_accuracy(X, y, folds=folds)
     scored = [i for i in head.cross_val_rows if e[i]]
     chance = 1.0 / max(len(labels), 2)
@@ -171,6 +196,7 @@ def fit_head(question, X, y, e, folds=5):
         "engine_balanced": eng_bal,
         "usable": usable,
         "rows": len(y),
+        "kind": head_kind(),
     }
 
 
@@ -424,7 +450,7 @@ class Learner:
         modality: what this learner reads. "text" takes text, conversations, audio (its transcript) and
             clips with speech; "image" takes pictures (with any words beside them) and silent clips (their
             frames). The two are read through different paths, so they are separate learners. A record is
-            a string, or a dict as vegaml.learn.as_record describes (text / image / images / audio / video,
+            a string, or a dict as vegaml_learn.as_record describes (text / image / images / audio / video,
             or turns of them).
         context / budget: what is read of a long conversation ("full", "recent" or "last") within `budget`
             characters, keeping the newest turns. frames / asr / language: how clips are sampled and
@@ -529,7 +555,7 @@ class Learner:
 
     # ------------------------------------------------------------------ answering
     def record(self, x):
-        """A record ready for this learner: a string, a vegaml.learn.Record, or a dict of text / image /
+        """A record ready for this learner: a string, a vegaml_learn.Record, or a dict of text / image /
         images / audio / video or turns of them (transcribed and sampled here, once)."""
         rec = as_record(x, self.reader, **self.read_kw)
         if rec.kind != self.modality:
@@ -993,6 +1019,7 @@ class Learner:
                 qs[q] = dict(
                     self.store.counts(q),
                     readout="head" if h and h["usable"] else "engine",
+                    learner=None if not h else h.get("kind", "ttt"),  # which learner fitted it: ttt or wells
                     cross_validated_accuracy=None if not h or h["cv"] is None else round(h["cv"], 3),
                     vega_alone_accuracy=None if not h else round(h["engine"], 3),
                 )

@@ -9,8 +9,8 @@ import types
 
 import numpy as np
 
-from vegaml.learn import Escalator, Learner, claude_teacher
-from vegaml.learn.teacher import claude_prompt
+from vegaml_learn import Escalator, Learner, claude_teacher
+from vegaml_learn.teacher import claude_prompt
 
 Q = {
     "team": {
@@ -206,7 +206,7 @@ def test_a_refused_record_gets_no_answer():
 def test_a_head_that_only_gives_the_common_answer_never_takes_over():
     # 5% of records are fraud; the features carry no signal, so the best a head can do is "no" to
     # everything: 95% accuracy, and not one fraud caught. vega's own answers catch them.
-    from vegaml.learn.learner import fit_head
+    from vegaml_learn.learner import fit_head
 
     rng = np.random.default_rng(0)
     q = {"type": "boolean", "instructions": "Is this fraud?"}
@@ -267,7 +267,7 @@ class _FakeVLLM:
 
 
 def test_vllm_teacher_asks_your_own_server_with_a_constrained_answer():
-    from vegaml.learn import vllm_teacher
+    from vegaml_learn import vllm_teacher
 
     srv, usage = _FakeVLLM({"team": "sales"}), {}
     try:
@@ -288,7 +288,7 @@ def test_vllm_teacher_asks_your_own_server_with_a_constrained_answer():
 
 
 def test_vllm_teacher_drives_the_escalator_end_to_end():
-    from vegaml.learn import vllm_teacher
+    from vegaml_learn import vllm_teacher
 
     srv = _FakeVLLM({"team": "technical"})
     try:
@@ -302,7 +302,7 @@ def test_vllm_teacher_drives_the_escalator_end_to_end():
 
 
 def test_vllm_teacher_reads_past_thinking_and_skips_garbage():
-    from vegaml.learn import vllm_teacher
+    from vegaml_learn import vllm_teacher
 
     srv = _FakeVLLM(None, content='<think>billing or sales?</think>{"team": "billing"}')
     try:

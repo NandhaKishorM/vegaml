@@ -2,7 +2,7 @@
 better (a person, a rules engine, a large model). The teacher's answer is served and learned from, so
 the share that needs the teacher falls as vega learns.
 
-    from vegaml.learn import Learner, Escalator, claude_teacher
+    from vegaml_learn import Learner, Escalator, claude_teacher
 
     learner = Learner(questions, workdir="./vega-state")
     desk = Escalator(learner, teacher=claude_teacher())      # or any function(text, questions) -> answers
@@ -51,7 +51,7 @@ class Escalator:
         accept_held=True,
         seed=0,
     ):
-        """learner: a vegaml.learn.Learner. teacher: function(text, {question id: question}) returning
+        """learner: a vegaml_learn.Learner. teacher: function(text, {question id: question}) returning
         {question id: answer}, each answer written as you would write feedback (an option name, true/false,
         a level); a question it cannot answer may be left out, and returning None or raising means no
         answer at all (vega's answer is served and nothing is learned).
@@ -393,7 +393,7 @@ def claude_teacher(
     max_tokens=4096,
     usage=None,
 ):
-    """A teacher backed by Claude (needs `pip install "vegaml[claude]"` and ANTHROPIC_API_KEY, or pass a
+    """A teacher backed by Claude (needs `pip install "vegaml-learn[claude]"` and ANTHROPIC_API_KEY, or pass a
     `client`). The record and the escalated questions go to Anthropic's API; nothing else does. A refused
     record returns no answer, so vega's own answer is served and nothing is learned from it.
     usage: an optional dict that collects input and output tokens and the number of calls."""

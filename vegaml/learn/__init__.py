@@ -1,40 +1,52 @@
-"""Continuous learning for vega: answer typed questions, take the right answer whenever you know it, and keep
-learning from it on your own machine. Apache 2.0.
+"""Continuous learning moved to its own package, vegaml-learn, in vegaml 0.20.
 
-    from vegaml import Learner                     # or: from vegaml.learn import Learner
-    learner = Learner(questions, examples=rows, workdir="./vega-state")
-    learner.decide(text)["answers"]["team"]["answer"]
-    learner.feedback(text, {"team": "billing"})    # learns every 50 confirmed answers, in the background
+vegaml-learn is licensed under the PolyForm Noncommercial License 1.0.0: free for noncommercial use;
+commercial use needs a licence from Embedding Space (https://embedding.in/licence,
+nandakishor@embedding.in). vegaml itself stays Apache 2.0. Install it with `pip install vegaml-learn`
+(`vegaml-learn[serve]` for the REST server,
+`[proxy]` for the vega Proxy, `[claude]` for claude_teacher).
 
-A teacher for what vega is unsure of (a person, a rules engine, a large model), learned from as it answers:
-
-    desk = Escalator(learner, teacher=vllm_teacher())   # or claude_teacher(), or any function
-    desk.decide(text)["answers"]["team"]["source"]          # "vega", or "teacher" while it is still learning
-
-Pictures, recordings, clips and conversations are records too (see vegaml.learn.records):
-
-    Learner(questions).decide({"audio": "call.wav"})                         # learns on the transcript
-    Learner(questions, modality="image").decide({"text": "Covered?", "image": "parcel.jpg"})
-
-REST API with JWT: `python -m vegaml.learn serve --questions q.json` (needs `pip install "vegaml[learn]"`).
+Once it is installed, `vegaml.learn` and its submodules (`vegaml.learn.proxy`, ...) are the same
+module objects as `vegaml_learn` and its submodules, so existing imports keep working.
 """
 
-from .learner import Learner, build, read_bundle, starting_store
-from .reader import Reader, label_of
-from .records import Record, as_record, window
-from .teacher import Escalator, claude_teacher, vllm_teacher
+import importlib
+import importlib.abc
+import importlib.util
+import sys
 
-__all__ = [
-    "Escalator",
-    "Learner",
-    "Reader",
-    "Record",
-    "as_record",
-    "window",
-    "build",
-    "claude_teacher",
-    "vllm_teacher",
-    "label_of",
-    "read_bundle",
-    "starting_store",
-]
+MOVED = (
+    "Continuous learning (Learner, Escalator, the vega Proxy) moved to its own package in vegaml 0.20. "
+    "Install it with `pip install vegaml-learn`. It is free for noncommercial use (PolyForm Noncommercial "
+    "1.0.0); commercial use needs a licence from Embedding Space: https://embedding.in/licence or "
+    "nandakishor@embedding.in."
+)
+
+try:
+    import vegaml_learn as _impl
+except ModuleNotFoundError as exc:
+    if exc.name != "vegaml_learn":
+        raise
+    raise ModuleNotFoundError(MOVED, name="vegaml_learn") from None
+
+
+class _Alias(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """`vegaml.learn.X` resolves to the already-imported `vegaml_learn.X`, never a second copy."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.startswith(__name__ + ".") and fullname != __name__ + ".__main__":
+            return importlib.util.spec_from_loader(fullname, self)
+        return None
+
+    def create_module(self, spec):
+        return importlib.import_module(_impl.__name__ + spec.name[len(__name__):])
+
+    def exec_module(self, module):
+        pass
+
+
+if not any(isinstance(f, _Alias) for f in sys.meta_path):
+    sys.meta_path.append(_Alias())
+
+__all__ = list(_impl.__all__)
+globals().update({name: getattr(_impl, name) for name in __all__})

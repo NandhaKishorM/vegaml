@@ -5,7 +5,7 @@ whose turns mix them. Each is turned, once, into one of the two things vega read
   speech;
 * a picture with text beside it: one image, several images tiled into one sheet, or a silent clip's frames.
 
-    from vegaml.learn import Learner
+    from vegaml_learn import Learner
     words = Learner(questions)                       # text, audio and clips with speech
     pictures = Learner(questions, modality="image")  # images and silent clips
 
@@ -123,7 +123,7 @@ def as_record(
 ):
     """A Record from what a caller has: a string, a Record, a dict with any of text / image / images /
     audio (with sampling_rate for a raw waveform) / video, or {"turns": [...]} whose turns carry a role
-    and any of those. Audio and video need `reader` (a vegaml.learn.Reader) to transcribe and sample.
+    and any of those. Audio and video need `reader` (a vegaml_learn.Reader) to transcribe and sample.
 
     video: how a clip is read. "auto" reads its speech when the sound track holds words, its frames
     otherwise; "frames" always looks (a transcriber can hear words in music, and an activity is in the

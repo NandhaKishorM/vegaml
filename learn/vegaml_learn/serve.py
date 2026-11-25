@@ -1,6 +1,6 @@
 """A REST API around a Learner: FastAPI, every route but /healthz behind a JWT.
 
-    python -m vegaml.learn serve --questions questions.json --examples examples.csv --workdir ./vega-state
+    python -m vegaml_learn serve --questions questions.json --examples examples.csv --workdir ./vega-state
 
 Tokens are checked with a shared secret (HS256, env VEGAML_LEARN_JWT_SECRET) or a public key (RS256, ES256
 or EdDSA,
@@ -40,7 +40,9 @@ def create_app(
         from fastapi import Depends, FastAPI, Header, HTTPException
         from pydantic import BaseModel, Field
     except ImportError as e:
-        raise SystemExit("the REST server needs its extras: pip install 'vegaml[learn]' (%s)" % e) from e
+        raise SystemExit(
+            "the REST server needs its extras: pip install 'vegaml-learn[serve]' (%s)" % e
+        ) from e
     if not (secret or public_key or no_auth):
         raise SystemExit(
             "no way to check tokens: set VEGAML_LEARN_JWT_SECRET, pass --jwt-public-key, "
@@ -219,7 +221,7 @@ def _learner(a, auto=True):
 def main(argv=None):
     import argparse
 
-    ap = argparse.ArgumentParser(prog="python -m vegaml.learn")
+    ap = argparse.ArgumentParser(prog="python -m vegaml_learn")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def source(p):
@@ -262,6 +264,17 @@ def main(argv=None):
     px.add_argument("--port", type=int, default=8890)
     px.add_argument("--state", default="./vega-proxy", help="where each decision's learner is saved")
     px.add_argument("--model", default=None, help="vega checkpoint (default: vegaml's)")
+    px.add_argument(
+        "--ledger",
+        default=None,
+        help="the keys and usage file (default: <state>/ledger.db); two proxies may share one",
+    )
+    px.add_argument(
+        "--ledger-shared",
+        type=float,
+        default=0.0,
+        help="seconds after which keys and limits are read again; set a few when two proxies share a ledger",
+    )
     px.add_argument("--device", default=None, help="cuda, cpu or mps (default: cuda when present)")
     px.add_argument("--every", type=int, default=25, help="learn after this many LLM answers")
     px.add_argument("--audit", type=float, default=0.05, help="share of sure answers still checked")

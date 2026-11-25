@@ -131,20 +131,20 @@ jobs:
           # torch.load / pickle execute arbitrary code during deserialization. vegaml loads
           # checkpoints from the Hub, so a pickle path would be remote code execution on
           # `vegaml.load("someone/their-model")`.
-          if grep -rnE --include='*.py' "\bpickle\b|torch\.load\(|joblib\.load\(|yaml\.load\(" vegaml/; then
+          if grep -rnE --include='*.py' "\bpickle\b|torch\.load\(|joblib\.load\(|yaml\.load\(" vegaml/ learn/vegaml_learn/; then
             echo "::error::unsafe deserialization in the shipped package - use safetensors"
             exit 1
           fi
-          echo "OK: no unsafe deserialization in vegaml/"
+          echo "OK: no unsafe deserialization in vegaml/ or learn/vegaml_learn/"
 
       - name: No shell-out or dynamic exec in the shipped package
         run: |
-          if grep -rnE "os\.system\(|subprocess\.|shell=True|\beval\(|\bexec\(" vegaml/ \
+          if grep -rnE "os\.system\(|subprocess\.|shell=True|\beval\(|\bexec\(" vegaml/ learn/vegaml_learn/ \
                | grep -v "\.eval()"; then
             echo "::error::shell-out or dynamic execution in the shipped package"
             exit 1
           fi
-          echo "OK: no os.system/subprocess/eval/exec in vegaml/"
+          echo "OK: no os.system/subprocess/eval/exec in vegaml/ or learn/vegaml_learn/"
 
       # The distinguishing risk for this package: a checkpoint is data downloaded from a third
       # party. If the runtime ever imported a .py file out of one, `vegaml.load(...)` would be

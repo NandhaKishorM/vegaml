@@ -1,11 +1,18 @@
 # Continuous learning
 
-`vegaml.Learner` answers your questions from day one and keeps learning from every answer you
+> **Separate package, noncommercial licence.** Continuous learning, the teacher loop and the vega Proxy
+> are in [vegaml-learn](../learn/README.md): `pip install vegaml-learn`. It is free for noncommercial use
+> under the [PolyForm Noncommercial License 1.0.0](../learn/LICENSE); commercial use needs a paid licence:
+> [embedding.in/licence](https://embedding.in/licence), quote from nandakishor@embedding.in. vegaml itself stays Apache 2.0, and the learner that shipped in
+> vegaml 0.17 to 0.19 keeps the Apache 2.0 licence it was released under. Imports written for 0.19
+> (`from vegaml import Learner`, `vegaml_learn`) keep working once vegaml-learn is installed.
+
+`vegaml_learn.Learner` answers your questions from day one and keeps learning from every answer you
 confirm, on the machine it runs on. No fine-tuning, no GPU needed to learn, and no record leaves
 that machine.
 
 ```python
-from vegaml import Learner
+from vegaml_learn import Learner
 
 questions = {
     "team": {"type": "choice", "instructions": "Which team handles this ticket?",
@@ -68,10 +75,10 @@ engine, or a large model. `Escalator` sends the teacher only what vega is unsure
 teacher's answer, and learns from it, so the share that needs the teacher falls as vega learns.
 
 ```python
-from vegaml.learn import Escalator, Learner, claude_teacher
+from vegaml_learn import Escalator, Learner, claude_teacher
 
 learner = Learner(questions, workdir="./vega-state")
-desk = Escalator(learner, teacher=claude_teacher())   # pip install "vegaml[claude]"; ANTHROPIC_API_KEY
+desk = Escalator(learner, teacher=claude_teacher())   # pip install "vegaml-learn[claude]"; ANTHROPIC_API_KEY
 out = desk.decide("I was charged twice this month")
 out["answers"]["team"]["source"]        # "teacher" while vega is learning, "vega" once it is sure
 out["answers"]["team"]["escalated"]     # why: "abstain", "unbound", "below line" or "audit"
@@ -106,7 +113,7 @@ there is no cost per call:
 
 ```python
 # vllm serve Qwen/Qwen3.8-27B --served-model-name teacher --max-model-len 8192
-from vegaml.learn import Escalator, Learner, vllm_teacher
+from vegaml_learn import Escalator, Learner, vllm_teacher
 
 desk = Escalator(Learner(questions), teacher=vllm_teacher("http://localhost:8000/v1"))
 ```
@@ -200,11 +207,11 @@ down to 3%, and audits could not catch it because vega agreed with its teacher.
 ## REST API with JWT
 
 ```bash
-pip install "vegaml[learn]"
+pip install "vegaml-learn[serve]"
 export VEGAML_LEARN_JWT_SECRET="$(openssl rand -hex 32)"
-python -m vegaml.learn serve --questions questions.json --examples examples.csv \
+python -m vegaml_learn serve --questions questions.json --examples examples.csv \
        --workdir ./vega-state --host 0.0.0.0 --port 8000
-python -m vegaml.learn token --subject helpdesk --scope decide feedback --days 30
+python -m vegaml_learn token --subject helpdesk --scope decide feedback --days 30
 ```
 
 `examples.csv` has a `text` column (or `--text-column`) and one column per question. Tokens are

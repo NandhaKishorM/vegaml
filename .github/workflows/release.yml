@@ -6,8 +6,11 @@ name: Release
 # Tag a commit v0.1.0 and push it; this builds, verifies the version matches the tag, publishes to
 # PyPI and opens a GitHub Release.
 #
+# Two packages ship from one tag: vegaml (Apache 2.0) and vegaml-learn (learn/, PolyForm
+# Noncommercial 1.0.0), always at the same version.
+#
 # Publishing goes through PyPI Trusted Publishing, so no API token exists anywhere in this
-# repository. It requires a Trusted Publisher registered on PyPI for:
+# repository. It requires a Trusted Publisher registered on PyPI, for each of the two projects, for:
 #   owner NandhaKishorM, repo vegaml, workflow release.yml, environment pypi
 # Until that exists the publish step fails with an OIDC error and nothing is uploaded; the build and
 # the GitHub Release still run.
@@ -39,27 +42,37 @@ jobs:
           python -m pip install --upgrade pip build twine
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[dev,vision]"
+          pip install -e "./learn[serve,proxy]"
 
       - name: Tests must pass before anything is built
-        run: python -m pytest -q
+        run: python -m pytest -q tests learn/tests
 
       - name: Build
-        run: python -m build
+        run: |
+          python -m build
+          python -m build --outdir dist-learn learn
 
       - name: Version matches the tag
         if: startsWith(github.ref, 'refs/tags/v')   # workflow_dispatch has no tag to match
         run: |
-          pkg=$(python -c "import re;print(re.search(r'version = \"(.*)\"', open('pyproject.toml').read()).group(1))")
           tag="${GITHUB_REF_NAME#v}"
-          echo "pyproject=$pkg tag=$tag"
-          test "$pkg" = "$tag" || { echo "::error::pyproject version $pkg does not match tag $tag"; exit 1; }
+          for f in pyproject.toml learn/pyproject.toml; do
+            pkg=$(python -c "import re,sys;print(re.search(r'version = \"(.*)\"', open(sys.argv[1]).read()).group(1))" "$f")
+            echo "$f=$pkg tag=$tag"
+            test "$pkg" = "$tag" || { echo "::error::$f version $pkg does not match tag $tag"; exit 1; }
+          done
 
-      - run: python -m twine check dist/*
+      - run: python -m twine check dist/* dist-learn/*
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-learn
+          path: dist-learn/
 
   pypi:
     needs: build
@@ -74,8 +87,17 @@ jobs:
         with:
           name: dist
           path: dist/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist-learn
+          path: dist-learn/
       # The artefacts published are byte-for-byte the ones the build job tested; this job never
       # rebuilds, so nothing can differ between what passed and what ships.
+      # vegaml-learn goes first: if its upload fails (no Trusted Publisher yet), vegaml is not
+      # published either, so vegaml without its learner never reaches PyPI on its own.
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist-learn/
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
 
   github_release:
@@ -90,7 +112,13 @@ jobs:
         with:
           name: dist
           path: dist/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist-learn
+          path: dist-learn/
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          files: dist/*
+          files: |
+            dist/*
+            dist-learn/*
           generate_release_notes: true
