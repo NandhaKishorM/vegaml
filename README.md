@@ -40,6 +40,8 @@ out["answers"]["team"]["choice"]                    # 'billing', with probs, a c
 
 ## Two packages, two licences
 
+This repository is dual-licensed by path. The short version is below; the full statement is in [LICENSING.md](https://github.com/NandhaKishorM/vegaml/blob/main/LICENSING.md).
+
 | Package | What is in it | Licence |
 |---|---|---|
 | **vegaml** (`pip install vegaml`) | The decision engine, heads fitted on your labels, calibration, policies, images, audio, video, serving | **Apache 2.0.** Free for any use, including commercial. |
@@ -884,6 +886,6 @@ pickle. Tests enforce that allow-list, and CI fails on any `pickle`, `torch.load
 
 ## Licence
 
-vegaml is Apache 2.0. The `learn/` folder (the vegaml-learn package: continuous learning, the teacher loop
+Dual-licensed by path, see [LICENSING.md](LICENSING.md). vegaml is Apache 2.0. The `learn/` folder (the vegaml-learn package: continuous learning, the teacher loop
 and the vega Proxy) is under the PolyForm Noncommercial License 1.0.0, see [learn/LICENSE](learn/LICENSE);
 commercial use of it needs a paid licence: [embedding.in/licence](https://embedding.in/licence), or write to nandakishor@embedding.in.
