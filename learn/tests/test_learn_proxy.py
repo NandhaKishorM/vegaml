@@ -385,3 +385,214 @@ def test_without_an_admin_token_the_admin_routes_do_not_exist(tmp_path, monkeypa
     monkeypatch.delenv("VEGA_ADMIN_TOKEN", raising=False)
     c = TestClient(app_with(tmp_path, LLM()))
     assert c.get("/v1/vega/admin/usage", headers={"authorization": "Bearer x"}).status_code == 404
+
+
+def test_a_limit_stops_vega_answering_and_never_refuses(tmp_path):
+    llm = LLM()
+    app = app_with(tmp_path, llm, keys={}, admin_token="adm-secret")
+    c = TestClient(app)
+    A = {"authorization": "Bearer adm-secret"}
+    key = c.post("/v1/vega/admin/keys", json={"owner": "user_1"}, headers=A).json()["key"]
+    h = {"x-vega-key": key, "x-api-key": "sk-ant-test", "anthropic-version": "2023-06-01"}
+    for seed in range(4):  # the LLM teaches until vega answers most of them
+        run_stream(c, 100, seed, headers=h)
+        flush(app)
+    assert c.get("/v1/vega/usage", headers=h).json()["limit"] is None  # no limit: nothing to report
+    before = c.get("/v1/vega/admin/usage", params={"owner": "user_1"}, headers=A).json()["totals"]["vega"]
+    assert before > 50
+    # bad requests are refused, a good one sets the cap three answers above what is already used
+    assert c.post("/v1/vega/admin/limits", json={"owner": "user_1"}, headers=A).status_code == 400
+    assert (
+        c.post("/v1/vega/admin/limits", json={"owner": "u u", "vega_limit": 1}, headers=A).status_code == 400
+    )
+    assert (
+        c.post("/v1/vega/admin/limits", json={"owner": "user_1", "vega_limit": -1}, headers=A).status_code
+        == 400
+    )
+    assert c.post("/v1/vega/admin/limits", json={"owner": "user_1", "vega_limit": 5}).status_code == 401
+    got = c.post(
+        "/v1/vega/admin/limits", json={"owner": "user_1", "vega_limit": before + 3}, headers=A
+    ).json()
+    assert got["limit"]["used"] == before and got["limit"]["left"] == 3 and not got["limit"]["reached"]
+    calls = llm.calls
+    out = run_stream(c, 60, 9, headers=h)  # every request still gets a right answer
+    assert sum(src == "vega" for src, _ in out) == 3  # exactly the three that were left
+    assert llm.calls - calls == 57 and all(ok for src, ok in out if src == "llm")
+    r = c.post("/v1/messages", json=ant_body("refund my invoice"), headers=h)
+    assert r.status_code == 200 and r.headers["x-vega-source"] == "llm"
+    assert r.headers["x-vega-limit"] == "reached" and r.headers["x-vega-escalated"] == "limit"
+    assert r.headers["x-vega-mode"] == "live"  # the mode the caller is in, not how the cap was applied
+    lim = c.get("/v1/vega/usage", headers=h).json()["limit"]
+    assert lim["reached"] and lim["used"] == before + 3 and lim["left"] == 0 and lim["resets"] > lim["since"]
+    assert c.get("/v1/vega/admin/limits", headers=A).json()["limits"][0]["owner"] == "user_1"
+    act = c.get("/v1/vega/admin/activity", params={"days": 30}, headers=A).json()
+    assert (
+        act["tenants"][0]["tenant"] == "user_1"
+        and act["tenants"][0]["keys"] == 1
+        and act["rows"][0]["vega"] > 0
+    )
+    assert c.get("/v1/vega/admin/activity").status_code == 401
+    logs = c.get("/v1/vega/admin/logs", params={"owner": "user_1", "limit": 1}, headers=A).json()["events"]
+    assert logs[0]["escalated"] == "limit" and logs[0]["source"] == "llm"
+    # vega mode never calls the LLM, but past the cap it has to
+    r = c.post("/v1/messages", json=ant_body("refund my invoice"), headers=h | {"x-vega-mode": "vega"})
+    assert r.headers["x-vega-source"] == "llm" and r.headers["x-vega-limit"] == "reached"
+    # another owner is not capped by this one's limit
+    other = c.post("/v1/vega/admin/keys", json={"owner": "user_2"}, headers=A).json()["key"]
+    assert (
+        "x-vega-limit"
+        not in c.post("/v1/messages", json=ant_body("refund"), headers=h | {"x-vega-key": other}).headers
+    )
+    # lifting the cap: vega answers again at once, with what it learned while capped
+    assert (
+        c.post("/v1/vega/admin/limits", json={"owner": "user_1", "vega_limit": None}, headers=A).json()[
+            "limit"
+        ]
+        is None
+    )
+    assert sum(src == "vega" for src, _ in run_stream(c, 60, 11, headers=h)) > 30
+    # the dashboard acts for a user without their key; a wrong token or a missing user is refused, and neither
+    # header (nor the admin token) ever reaches the LLM
+    as_user = {
+        "x-vega-admin": "adm-secret",
+        "x-vega-as": "user_1",
+        "x-api-key": "sk-ant-test",
+        "anthropic-version": "2023-06-01",
+    }
+    r = c.post(
+        "/v1/messages", json=ant_body("refund my invoice"), headers=as_user | {"x-vega-mode": "shadow"}
+    )
+    assert r.status_code == 200 and r.headers["x-vega-source"] == "llm"
+    assert "x-vega-admin" not in llm.seen[-1] and "x-vega-as" not in llm.seen[-1]
+    assert "adm-secret" not in json.dumps(llm.seen[-1])
+    assert (
+        c.post("/v1/messages", json=ant_body("x"), headers=as_user | {"x-vega-admin": "wrong"}).status_code
+        == 401
+    )
+    assert (
+        c.post("/v1/messages", json=ant_body("x"), headers={"x-vega-admin": "adm-secret"}).status_code == 401
+    )
+    assert c.post("/v1/messages", json=ant_body("x"), headers={"x-vega-as": "user_1"}).status_code == 401
+    assert c.get("/v1/vega/usage", headers=as_user).json()["owner"] == "user_1"
+
+
+def test_ledger_limits_and_exact_windows(tmp_path):
+    import time
+
+    from vegaml.learn.ledger import Ledger, month_start, next_month_start
+
+    led = Ledger(str(tmp_path / "l.db"))
+    now = time.time()
+    assert month_start(now) <= now < next_month_start(now)
+    assert time.gmtime(month_start(now)).tm_mday == 1 and time.gmtime(next_month_start(now)).tm_mday == 1
+    assert next_month_start(1798761599) == 1798761600  # 31 Dec 2026 23:59:59 UTC -> 1 Jan 2027
+    assert not led.over_limit("a") and led.get_limit("a") is None and led.limits() == []
+    last_month = month_start(now) - 5 * 86400
+    for ts, src in (
+        (last_month, "vega"),
+        (last_month, "vega"),
+        (now - 30, "vega"),
+        (now - 20, "llm"),
+        (now - 10, "vega"),
+    ):
+        led.log(tenant="a", source=src, ts=ts)
+    led.set_limit("a", 3)
+    assert led.get_limit("a")["used"] == 2 and not led.over_limit("a")  # last month does not count
+    led.log(tenant="a", source="vega")
+    led.log(tenant="b", source="vega")  # someone else's answers do not count either
+    assert led.over_limit("a") and led.get_limit("a")["left"] == 0 and not led.over_limit("b")
+    led.set_limit("a", 10, since=last_month - 1)  # counted from a fixed moment: everything since then
+    lim = led.get_limit("a")
+    assert lim["used"] == 5 and lim["resets"] is None and not lim["reached"]
+    led.set_limit("a", 0)
+    assert led.over_limit("a")
+    # a limit survives a restart
+    again = Ledger(str(tmp_path / "l.db"))
+    assert again.over_limit("a") and again.get_limit("a")["used"] == 3
+    led.set_limit("a", None)
+    assert not led.over_limit("a") and led.limits() == []
+    # usage for an exact window: a billing period
+    u = led.usage(owner="a", since=month_start(now), until=now - 15)
+    assert u["totals"]["vega"] == 1 and u["totals"]["llm"] == 1 and u["since"] == month_start(now)
+    assert led.usage(owner="a", since=last_month - 1, until=month_start(now))["totals"]["vega"] == 2
+    assert led.usage(owner="a", days=30)["until"] is None
+    assert led.vega_count("a", month_start(now)) == 3 and led.vega_count("a", 0, until=month_start(now)) == 2
+    # activity: a row per tenant per day, a line per tenant, and the people who made a key and never used it
+    led.create_key("c", "unused")
+    led.create_key("a", "prod")
+    led.log(
+        tenant="a", source="vega", decision="d1", model="m", read="text,image", mode="shadow", saved_usd=0.5
+    )
+    act = led.activity(days=90)
+    by = {t["tenant"]: t for t in act["tenants"]}
+    assert (
+        set(by) == {"a", "b", "c"}
+        and by["c"]["requests"] == 0
+        and by["c"]["keys"] == 1
+        and by["c"]["first_seen"] is None
+    )
+    assert (
+        by["a"]["requests"] == 7
+        and by["a"]["vega"] == 6
+        and by["a"]["active_days"] == 2
+        and by["a"]["keys"] == 1
+    )
+    assert by["a"]["first_vega"] == last_month and by["a"]["images"] == 1 and by["a"]["shadow"] == 1
+    assert by["a"]["first_seen"] == last_month and by["a"]["saved_usd"] == 0.5 and by["b"]["keys"] == 0
+    days_a = [r for r in act["rows"] if r["tenant"] == "a"]
+    assert (
+        len(days_a) == 2 and sum(r["requests"] for r in days_a) == 7 and days_a[0]["day"] < days_a[1]["day"]
+    )
+    assert led.activity(days=1)["rows"][0]["day"] == days_a[1]["day"]  # a short window drops last month's row
+
+
+def test_two_proxies_share_one_ledger(tmp_path):
+    import time
+
+    from vegaml.learn.ledger import Ledger
+
+    path = str(tmp_path / "shared.db")
+    a, b = Ledger(path, shared=0.05), Ledger(path, shared=0.05)
+    key, row = a.create_key("user_1", "prod")
+    assert b.tenant_for(key) == (row["id"], "user_1")  # a key made through one works on the other at once
+    a.set_limit("user_1", 3)
+    time.sleep(0.08)
+    assert b.get_limit("user_1")["vega_limit"] == 3 and not b.over_limit("user_1")
+    a.log(tenant="user_1", source="vega")
+    b.log(tenant="user_1", source="vega")
+    a.log(tenant="user_1", source="vega")
+    time.sleep(0.08)  # each sees the other's answers once what it remembered is old
+    assert a.over_limit("user_1") and b.over_limit("user_1") and b.get_limit("user_1")["used"] == 3
+    assert (
+        a.usage(owner="user_1", days=1)["totals"]["vega"]
+        == 3
+        == b.usage(owner="user_1", days=1)["totals"]["vega"]
+    )
+    assert a.revoke_key(row["id"])
+    assert a.tenant_for(key) is None
+    time.sleep(0.08)
+    assert b.tenant_for(key) is None  # revoked through one: refused by the other
+    # a ledger that is not shared never re-reads (one proxy: nothing else can change it)
+    solo = Ledger(str(tmp_path / "solo.db"))
+    k2, _ = solo.create_key("u", "x")
+    assert solo.tenant_for(k2) and solo.shared == 0.0
+
+
+def test_the_proxy_says_which_model_answered(tmp_path):
+    app = app_with(tmp_path, LLM(), model_name="4b")
+    c = TestClient(app)
+    assert c.get("/health").json()["model"] == "4b"
+    r = c.post("/v1/messages", json=ant_body("refund my invoice"), headers=H)
+    assert r.headers["x-vega-model"] == "4b"
+
+
+def test_a_removed_state_folder_does_not_fail_requests(tmp_path):
+    import shutil
+
+    app = app_with(tmp_path, LLM())
+    c = TestClient(app)
+    run_stream(c, 12, 1)
+    shutil.rmtree(tmp_path / "state" / "acme")  # someone tidied the disk under a running proxy
+    assert all(
+        src in ("llm", "vega") for src, _ in run_stream(c, 30, 2)
+    )  # saves every 10 requests: none fails

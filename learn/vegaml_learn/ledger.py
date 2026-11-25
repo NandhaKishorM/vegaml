@@ -10,8 +10,11 @@ logs, and leaves the messages themselves where they were.
     led.tenant_for(key)                                    # -> "user_2abc"
     led.log(tenant="user_2abc", decision="support-route", source="vega", latency_ms=41.0, saved_usd=0.008)
     led.usage(owner="user_2abc", days=30)                  # totals, daily series, per decision, per model
+    led.set_limit("user_2abc", 10_000)                     # at most 10,000 vega answers a calendar month
+    led.over_limit("user_2abc")                            # -> True once they are used up
 """
 
+import calendar
 import hashlib
 import secrets
 import sqlite3
@@ -32,6 +35,9 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_tenant_ts ON events(tenant, ts);
 CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
+CREATE TABLE IF NOT EXISTS limits (
+    owner TEXT PRIMARY KEY, vega_limit INTEGER NOT NULL, since REAL, updated REAL NOT NULL
+);
 """
 _FIELDS = (
     "ts",
@@ -58,16 +64,44 @@ def _hash(key):
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
+def month_start(now=None):
+    """The first second of the current calendar month, UTC."""
+    t = time.gmtime(time.time() if now is None else now)
+    return float(calendar.timegm((t.tm_year, t.tm_mon, 1, 0, 0, 0)))
+
+
+def next_month_start(now=None):
+    t = time.gmtime(time.time() if now is None else now)
+    y, m = (t.tm_year + 1, 1) if t.tm_mon == 12 else (t.tm_year, t.tm_mon + 1)
+    return float(calendar.timegm((y, m, 1, 0, 0, 0)))
+
+
 class Ledger:
-    def __init__(self, path):
+    def __init__(self, path, shared=0.0):
+        """`shared`: seconds after which what this process remembers (keys, limits, counts) is read again.
+        Leave it at 0 for one proxy. Give two proxies that write to the same file a few seconds each, so a key
+        revoked or a limit reached through one is seen by the other; a limit can then overshoot by what the
+        other answered in that time, never more."""
         self.path = path
-        self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self.shared = float(shared or 0.0)
+        self._read_at = time.monotonic()
+        self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None, timeout=30)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
         with self._lock:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.executescript(_SCHEMA)
         self._cache = {}  # key hash -> (key id, owner), revocation clears it
+        self._limits = None  # owner -> (vega_limit, since or None), read once
+        self._used = {}  # owner -> [window start, vega answers in it], kept in step by log()
+
+    def _fresh(self):
+        """Forget what was remembered once it is older than `shared`: another process may have changed it."""
+        if self.shared and time.monotonic() - self._read_at > self.shared:
+            self._cache.clear()
+            self._limits = None
+            self._used.clear()
+            self._read_at = time.monotonic()
 
     # ------------------------------------------------------------------ keys
     def create_key(self, owner, name=""):
@@ -115,6 +149,7 @@ class Ledger:
 
     def tenant_for(self, key):
         """(key id, owner) for a live key, or None."""
+        self._fresh()
         h = _hash(key or "")
         got = self._cache.get(h)
         if got is None:
@@ -129,6 +164,81 @@ class Ledger:
                 self._db.execute("UPDATE keys SET last_used = ? WHERE id = ?", (time.time(), r["id"]))
         return got
 
+    # ------------------------------------------------------------------ limits
+    def set_limit(self, owner, vega_limit, since=None):
+        """At most `vega_limit` answers by vega for `owner` per period. Past that the proxy sends every
+        decision to the LLM: nothing is refused, vega just stops answering. The period is the calendar month
+        (UTC), or, with `since` (a timestamp), everything from then on. `vega_limit=None` removes it."""
+        owner = str(owner)
+        with self._lock:
+            if vega_limit is None:
+                self._db.execute("DELETE FROM limits WHERE owner = ?", (owner,))
+            else:
+                self._db.execute(
+                    "INSERT INTO limits (owner, vega_limit, since, updated) VALUES (?, ?, ?, ?)"
+                    " ON CONFLICT(owner) DO UPDATE SET vega_limit = excluded.vega_limit,"
+                    " since = excluded.since, updated = excluded.updated",
+                    (owner, max(0, int(vega_limit)), None if since is None else float(since), time.time()),
+                )
+            self._limits = None
+            self._used.pop(owner, None)
+
+    def _limit_rows(self):
+        self._fresh()
+        if self._limits is None:
+            with self._lock:
+                rows = self._db.execute("SELECT owner, vega_limit, since FROM limits").fetchall()
+            self._limits = {r["owner"]: (int(r["vega_limit"]), r["since"]) for r in rows}
+        return self._limits
+
+    def vega_count(self, owner, since, until=None):
+        q, args = (
+            "SELECT COUNT(*) FROM events WHERE tenant = ? AND source = 'vega' AND ts >= ?",
+            [owner, since],
+        )
+        if until is not None:
+            q, args = q + " AND ts < ?", args + [until]
+        with self._lock:
+            return int(self._db.execute(q, args).fetchone()[0])
+
+    def _window_used(self, owner, since):
+        """vega answers for `owner` since `since`: counted once from the events, then kept in step by
+        log()."""
+        got = self._used.get(owner)
+        if got is None or got[0] != since:
+            got = self._used[owner] = [since, self.vega_count(owner, since)]
+        return got[1]
+
+    def get_limit(self, owner):
+        """None when `owner` has no limit, else {"vega_limit", "used", "left", "reached", "since", "resets"}
+        (`resets` is None for a limit counted from a fixed `since`)."""
+        row = self._limit_rows().get(str(owner))
+        if row is None:
+            return None
+        cap, fixed = row
+        since = month_start() if fixed is None else float(fixed)
+        used = self._window_used(str(owner), since)
+        return {
+            "owner": str(owner),
+            "vega_limit": cap,
+            "used": used,
+            "left": max(0, cap - used),
+            "reached": used >= cap,
+            "since": since,
+            "resets": next_month_start() if fixed is None else None,
+        }
+
+    def limits(self):
+        return [self.get_limit(o) for o in sorted(self._limit_rows())]
+
+    def over_limit(self, owner):
+        """True when `owner` has a limit and has used it up. Cheap: no query after the first call in a
+        period."""
+        if not self._limit_rows():
+            return False
+        got = self.get_limit(owner)
+        return bool(got and got["reached"])
+
     # ------------------------------------------------------------------ events
     def log(self, **e):
         e.setdefault("ts", time.time())
@@ -138,17 +248,27 @@ class Ledger:
                 "INSERT INTO events (%s) VALUES (%s)" % (", ".join(_FIELDS), ", ".join("?" * len(_FIELDS))),
                 row,
             )
+            got = self._used.get(e.get("tenant"))
+            if got is not None and e.get("source") == "vega" and e["ts"] >= got[0]:
+                got[1] += 1
 
-    def _where(self, owner, since):
+    def _where(self, owner, since, until=None):
         q, args = " WHERE ts >= ?", [since]
+        if until is not None:
+            q, args = q + " AND ts < ?", args + [until]
         if owner is not None:
             q, args = q + " AND tenant = ?", args + [owner]
         return q, args
 
-    def usage(self, owner=None, days=30):
-        """Totals, a daily series, and breakdowns by decision and model (and by user when `owner` is None)."""
-        since = time.time() - max(1, int(days)) * 86400
-        w, args = self._where(owner, since)
+    def usage(self, owner=None, days=30, since=None, until=None):
+        """Totals, a daily series, and breakdowns by decision and model (and by user when `owner` is None).
+        The window is the last `days`, or exactly [`since`, `until`) when `since` (a timestamp) is given: what
+        a billing period needs."""
+        if since is None:
+            since, until = time.time() - max(1, int(days)) * 86400, None
+        else:
+            since, until = float(since), (None if until is None else float(until))
+        w, args = self._where(owner, since, until)
         agg = (
             "COUNT(*) AS requests,"
             " SUM(source = 'vega') AS vega, SUM(source = 'llm') AS llm,"
@@ -229,6 +349,8 @@ class Ledger:
                 d[k] = None if d.get(k) is None else round(float(d[k]), 3)
         return {
             "days": int(days),
+            "since": since,
+            "until": until,
             "owner": owner,
             "totals": totals,
             "daily": daily,
@@ -237,6 +359,89 @@ class Ledger:
             "users": by_user,
             "escalation_reasons": reasons,
         }
+
+    def activity(self, days=90):
+        """What a dashboard needs to see how its users behave over time, without any content: one row per
+        tenant per day for the last `days` ("rows"), and every tenant's whole history in one line each
+        ("tenants": first and last request, totals, how many days they were active, what they used)."""
+        since = time.time() - max(1, int(days)) * 86400
+        with self._lock:
+            rows = [
+                dict(r)
+                for r in self._db.execute(
+                    "SELECT tenant, date(ts, 'unixepoch') AS day, COUNT(*) AS requests,"
+                    " SUM(source = 'vega') AS vega, SUM(source = 'llm') AS llm,"
+                    " SUM(source = 'passthrough') AS passthrough,"
+                    " SUM(source = 'error' OR status >= 400) AS errors,"
+                    " SUM(COALESCE(saved_usd, 0)) AS saved_usd, SUM(COALESCE(cost_usd, 0)) AS cost_usd"
+                    " FROM events WHERE ts >= ? GROUP BY tenant, day ORDER BY day, tenant",
+                    (since,),
+                )
+            ]
+            tenants = [
+                dict(r)
+                for r in self._db.execute(
+                    "SELECT tenant, MIN(ts) AS first_seen, MAX(ts) AS last_seen, COUNT(*) AS requests,"
+                    " SUM(source = 'vega') AS vega, SUM(source = 'llm') AS llm,"
+                    " SUM(source = 'passthrough') AS passthrough,"
+                    " SUM(source = 'error' OR status >= 400) AS errors,"
+                    " MIN(CASE WHEN source = 'vega' THEN ts END) AS first_vega,"
+                    " COUNT(DISTINCT date(ts, 'unixepoch')) AS active_days,"
+                    " COUNT(DISTINCT decision) AS decisions, COUNT(DISTINCT model) AS models,"
+                    " SUM(COALESCE(saved_usd, 0)) AS saved_usd, SUM(COALESCE(cost_usd, 0)) AS cost_usd,"
+                    " SUM(mode = 'shadow') AS shadow, SUM(read LIKE '%image%') AS images,"
+                    " SUM(read LIKE '%audio%' OR read LIKE '%speech%') AS audio"
+                    " FROM events GROUP BY tenant ORDER BY last_seen DESC LIMIT 5000"
+                )
+            ]
+            keyed = {
+                r["owner"]: dict(r)
+                for r in self._db.execute(
+                    "SELECT owner, MIN(created) AS first_key, COUNT(*) AS keys,"
+                    " SUM(revoked IS NULL) AS live_keys FROM keys GROUP BY owner"
+                )
+            }
+        for d in rows + tenants:
+            for k in ("vega", "llm", "passthrough", "errors", "shadow", "images", "audio"):
+                if k in d:
+                    d[k] = int(d[k] or 0)
+            for k in ("saved_usd", "cost_usd"):
+                d[k] = round(float(d.get(k) or 0.0), 6)
+        seen = {t["tenant"] for t in tenants}
+        for t in tenants:
+            k = keyed.get(t["tenant"]) or {}
+            t["first_key"], t["keys"], t["live_keys"] = (
+                k.get("first_key"),
+                int(k.get("keys") or 0),
+                int(k.get("live_keys") or 0),
+            )
+        for owner, k in keyed.items():  # made a key, never sent a request: the step people drop at
+            if owner not in seen:
+                tenants.append(
+                    {
+                        "tenant": owner,
+                        "first_seen": None,
+                        "last_seen": None,
+                        "requests": 0,
+                        "vega": 0,
+                        "llm": 0,
+                        "passthrough": 0,
+                        "errors": 0,
+                        "first_vega": None,
+                        "active_days": 0,
+                        "decisions": 0,
+                        "models": 0,
+                        "saved_usd": 0.0,
+                        "cost_usd": 0.0,
+                        "shadow": 0,
+                        "images": 0,
+                        "audio": 0,
+                        "first_key": k["first_key"],
+                        "keys": int(k["keys"]),
+                        "live_keys": int(k["live_keys"] or 0),
+                    }
+                )
+        return {"days": int(days), "rows": rows, "tenants": tenants}
 
     def logs(self, owner=None, limit=100, before=None, decision=None, source=None):
         """The newest events, newest first; `before` (an event id) pages back."""

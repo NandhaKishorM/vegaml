@@ -19,6 +19,10 @@ Modes, per request (x-vega-mode header) or per decision (POST /v1/vega/mode):
     vega    vega answers everything and the LLM is never called
     off     plain passthrough
 
+Limits: POST /v1/vega/admin/limits {"owner": id, "vega_limit": n} caps how many decisions vega answers for an
+owner per calendar month. Past the cap nothing is refused: the LLM answers every decision (x-vega-limit:
+reached) and vega keeps reading alongside, so what it learned is ready when the cap lifts.
+
 How sure vega must be, per field: x-vega-trust: topic=0.85,route=0.9 (or POST /v1/vega/trust) sets the
 share of vega's answers that must agree with the LLM before vega answers that field alone; fields left
 out keep the server default (0.95). One unsure field still sends the whole request to the LLM, so give a
@@ -445,6 +449,7 @@ class Desk:
                 "escalator": self.esc.state(),
             }
             self._since_save = 0
+        os.makedirs(self.dir, exist_ok=True)  # a folder removed under a running proxy must not fail a request
         tmp = os.path.join(self.dir, "desk.json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -507,6 +512,8 @@ def create_app(
     budget=DEFAULT_BUDGET,
     ledger=None,
     admin_token=None,
+    model_name=None,
+    shared=0.0,
 ):
     """keys: {vega key: tenant}; None or {} (and no key in the ledger) lets anyone in as tenant "default"
     (local use only). transport: an httpx transport for the upstream calls (tests).
@@ -527,7 +534,7 @@ def create_app(
 
     os.makedirs(state, exist_ok=True)
     if ledger is None or isinstance(ledger, str):
-        ledger = Ledger(ledger or os.path.join(state, "ledger.db"))
+        ledger = Ledger(ledger or os.path.join(state, "ledger.db"), shared=shared)
     admin_token = admin_token if admin_token is not None else os.environ.get("VEGA_ADMIN_TOKEN", "")
     prices = dict(PRICES, **(prices or {}))
     hashed = {hashlib.sha256(k.encode()).hexdigest(): t for k, t in (keys or {}).items()}
@@ -549,7 +556,15 @@ def create_app(
     app = FastAPI(title="vega Proxy", docs_url=None, redoc_url=None, lifespan=lifespan)
 
     def tenant_of(request):
-        """The tenant a request belongs to: a key from VEGA_PROXY_KEYS, or one made through the admin API."""
+        """The tenant a request belongs to: a key from VEGA_PROXY_KEYS, or one made through the admin API.
+        A dashboard's server can also act for one of its users without holding their key: x-vega-admin (the
+        admin token) with x-vega-as (the user). Both are x-vega-* headers, so neither is ever sent on."""
+        boss, who = request.headers.get("x-vega-admin") or "", request.headers.get("x-vega-as") or ""
+        if boss or who:
+            if not (admin_token and boss and hmac.compare_digest(boss, admin_token) and _NAME.fullmatch(who)):
+                raise HTTPException(401, "x-vega-admin and x-vega-as need the admin token and a user id")
+            request.state.key_id = None
+            return who
         k = request.headers.get("x-vega-key") or ""
         if k:
             t = hashed.get(hashlib.sha256(k.encode()).hexdigest())
@@ -756,6 +771,12 @@ def create_app(
         if bar:
             apply_trust(desk, parse_trust(bar))
         use = want or desk.mode
+        asked = use
+        # the owner's vega answers for the period are used up: the LLM answers every decision and vega only
+        # reads alongside, so nothing is refused and what it has learned is kept for when the limit lifts
+        capped = use in ("live", "vega") and ledger.over_limit(tenant)
+        if capped:
+            use = "shadow"
         if use == "off":
             t0 = time.perf_counter()
             resp = await passthrough(request, api, path, raw)
@@ -784,15 +805,20 @@ def create_app(
         vh = {
             "x-vega-decision": desk.key,
             "x-vega-id": rid,
-            "x-vega-mode": use,
+            "x-vega-mode": asked,
             "x-vega-confidence": "%.4f" % (min(confs) if confs else 0.0),
             "x-vega-latency-ms": "%.1f" % (1000 * (time.perf_counter() - t0)),
             "x-vega-read": ",".join(sorted(set(rec.sources))) or rec.kind,
         }
+        if model_name:
+            vh["x-vega-model"] = model_name
+        if capped:
+            why = ["limit"]
+            vh["x-vega-limit"] = "reached"
         if why:
             vh["x-vega-escalated"] = ",".join(why)
         ms = 1000 * (time.perf_counter() - t0)
-        row = {"api": api, "model": spec["model"], "decision": desk.key, "mode": use, "latency_ms": ms,
+        row = {"api": api, "model": spec["model"], "decision": desk.key, "mode": asked, "latency_ms": ms,
                "confidence": min(confs) if confs else None, "escalated": ",".join(why) or None,
                "read": vh["x-vega-read"]}
         if ctx.get("resp") is not None:
@@ -816,7 +842,7 @@ def create_app(
 
     @app.get("/health")
     def health():
-        return {"ok": True, "decisions": len(desks), "checkpoint": reader.fingerprint()}
+        return {"ok": True, "decisions": len(desks), "checkpoint": reader.fingerprint(), "model": model_name}
 
     @app.post("/v1/messages")
     async def messages(request: Request):
@@ -886,8 +912,10 @@ def create_app(
 
     @app.get("/v1/vega/usage")
     def my_usage(request: Request, days: int = 30):
-        """Your own numbers: totals, a daily series, per decision and per model."""
-        return ledger.usage(owner=tenant_of(request), days=days)
+        """Your own numbers: totals, a daily series, per decision and per model, and your limit if you
+        have one."""
+        tenant = tenant_of(request)
+        return dict(ledger.usage(owner=tenant, days=days), limit=ledger.get_limit(tenant))
 
     @app.get("/v1/vega/logs")
     def my_logs(request: Request, limit: int = 100, before: int | None = None):
@@ -927,9 +955,45 @@ def create_app(
         return {"ok": True, "id": key_id}
 
     @app.get("/v1/vega/admin/usage")
-    def admin_usage(request: Request, owner: str | None = None, days: int = 30):
+    def admin_usage(request: Request, owner: str | None = None, days: int = 30, since: float | None = None,
+                    until: float | None = None):
+        """The last `days`, or exactly [since, until) in unix seconds: a billing period."""
         admin(request)
-        return ledger.usage(owner=owner, days=days)
+        return ledger.usage(owner=owner, days=days, since=since, until=until)
+
+    @app.post("/v1/vega/admin/limits")
+    async def admin_set_limit(request: Request):
+        """{"owner": id, "vega_limit": n} caps vega's answers per calendar month (UTC); add "since" (unix
+        seconds) to count from a fixed moment instead; "vega_limit": null removes the cap. Past the cap the
+        LLM answers every decision: nothing is refused."""
+        admin(request)
+        try:
+            body = json.loads(await request.body())
+            owner = str(body["owner"])
+            cap = body["vega_limit"]
+            cap = None if cap is None else int(cap)
+            since = body.get("since")
+            since = None if since is None else float(since)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(400, 'send {"owner": <user id>, "vega_limit": <number or null>}') from None
+        if not _NAME.fullmatch(owner):
+            raise HTTPException(400, "owner is letters, digits, - _ . only")
+        if cap is not None and cap < 0:
+            raise HTTPException(400, "vega_limit is zero or more, or null for no limit")
+        ledger.set_limit(owner, cap, since)
+        return {"ok": True, "owner": owner, "limit": ledger.get_limit(owner)}
+
+    @app.get("/v1/vega/admin/limits")
+    def admin_limits(request: Request, owner: str | None = None):
+        admin(request)
+        return {"limits": [ledger.get_limit(owner)] if owner else ledger.limits()}
+
+    @app.get("/v1/vega/admin/activity")
+    def admin_activity(request: Request, days: int = 90):
+        """Per tenant per day, and every tenant's history in one line: what retention, active-user and funnel
+        charts are drawn from. No content, as everywhere in the ledger."""
+        admin(request)
+        return ledger.activity(days=days)
 
     @app.get("/v1/vega/admin/logs")
     def admin_logs(request: Request, owner: str | None = None, limit: int = 100, before: int | None = None,
@@ -1032,6 +1096,9 @@ def run(a):
         context=a.context,
         budget=a.context_chars,
         prices={k: tuple(v) for k, v in prices.items()},
+        ledger=a.ledger,
+        shared=a.ledger_shared,
+        model_name=a.model or "0.8b",  # vegaml's default checkpoint is the 0.8B
     )
     import uvicorn
 

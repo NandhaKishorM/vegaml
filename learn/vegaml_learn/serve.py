@@ -264,6 +264,17 @@ def main(argv=None):
     px.add_argument("--port", type=int, default=8890)
     px.add_argument("--state", default="./vega-proxy", help="where each decision's learner is saved")
     px.add_argument("--model", default=None, help="vega checkpoint (default: vegaml's)")
+    px.add_argument(
+        "--ledger",
+        default=None,
+        help="the keys and usage file (default: <state>/ledger.db); two proxies may share one",
+    )
+    px.add_argument(
+        "--ledger-shared",
+        type=float,
+        default=0.0,
+        help="seconds after which keys and limits are read again; set a few when two proxies share a ledger",
+    )
     px.add_argument("--device", default=None, help="cuda, cpu or mps (default: cuda when present)")
     px.add_argument("--every", type=int, default=25, help="learn after this many LLM answers")
     px.add_argument("--audit", type=float, default=0.05, help="share of sure answers still checked")
