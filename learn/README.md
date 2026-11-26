@@ -2,6 +2,25 @@
 
 Continuous learning for [vega](https://github.com/NandhaKishorM/vegaml), **free for noncommercial use only** (see [Licence](#licence-noncommercial-only)): a `Learner` that answers from day one and learns from every answer you confirm, an `Escalator` that sends only what vega is unsure of to a teacher and learns from the reply, and the vega Proxy that sits in front of an LLM API and learns your decisions from it.
 
+> **Cite this work.** M, N.; M, A. From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities. *Preprints* **2026**, 2026110781. [https://doi.org/10.20944/preprints202611.0781.v1](https://doi.org/10.20944/preprints202611.0781.v1)
+
+<details>
+<summary>BibTeX</summary>
+
+```bibtex
+@article{m2026laya_vega,
+  title   = {From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities},
+  author  = {M, N. and M, A.},
+  journal = {Preprints},
+  year    = {2026},
+  pages   = {2026110781},
+  doi     = {10.20944/preprints202611.0781.v1},
+  url     = {https://doi.org/10.20944/preprints202611.0781.v1}
+}
+```
+
+</details>
+
 ## Licence: noncommercial only
 
 > **Read this before you build on it.** vegaml-learn is **not** open source in the Apache or MIT sense. It is licensed under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) ([LICENSE](https://github.com/NandhaKishorM/vegaml/blob/main/learn/LICENSE)).

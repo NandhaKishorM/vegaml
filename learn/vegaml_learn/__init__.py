@@ -23,7 +23,7 @@ REST API with JWT: `python -m vegaml_learn serve --questions q.json`
 (needs `pip install "vegaml-learn[serve]"`).
 """
 
-__version__ = "0.20.0"
+__version__ = "0.20.1"
 
 from .learner import Learner, build, read_bundle, starting_store
 from .reader import Reader, label_of
