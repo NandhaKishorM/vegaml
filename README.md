@@ -22,6 +22,25 @@ Calibrated probabilities, an honest "I should not decide", 73k tokens of context
   <a href="https://embedding.in/licence">Commercial licence</a>
 </p>
 
+> **Cite this work.** M, N.; M, A. From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities. *Preprints* **2026**, 2026110781. [https://doi.org/10.20944/preprints202611.0781.v1](https://doi.org/10.20944/preprints202611.0781.v1)
+
+<details>
+<summary>BibTeX</summary>
+
+```bibtex
+@article{m2026laya_vega,
+  title   = {From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities},
+  author  = {M, N. and M, A.},
+  journal = {Preprints},
+  year    = {2026},
+  pages   = {2026110781},
+  doi     = {10.20944/preprints202611.0781.v1},
+  url     = {https://doi.org/10.20944/preprints202611.0781.v1}
+}
+```
+
+</details>
+
 <p align="center"><img src="https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega-valleys.svg" width="900" alt="How it decides: a frozen LLM reads the message once, every answer is a valley, and a particle rolls and settles in one. Where it settles is the answer, with its probability, conformal set, abstain and unbound flags." /></p>
 
 ```bash
@@ -103,25 +122,6 @@ Jev leads on day one (23 of 31 questions); they are level at 40; vega leads at 1
 **Where it loses.** Zero-shot on generic public suites, a large hosted model leads. As a prompt-injection gate on real traffic (ToxicChat, 1.8% attacks), Jev untaught catches 79.1% at 0.3% refused against 73.0% at 0.7% for a fitted head. On familiar labels with enough examples, a plain classifier on the same features matches or beats the engine; the engine's edge is cold start and new options.
 
 > **[Studio, from Embedding Space](https://studio.embedding.in)** builds the starting set for your questions and runs it for you.
-
-> **Cite this work.** M, N.; M, A. From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities. *Preprints* **2026**, 2026110781. [https://doi.org/10.20944/preprints202611.0781.v1](https://doi.org/10.20944/preprints202611.0781.v1)
-
-<details>
-<summary>BibTeX</summary>
-
-```bibtex
-@article{m2026laya_vega,
-  title   = {From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities},
-  author  = {M, N. and M, A.},
-  journal = {Preprints},
-  year    = {2026},
-  pages   = {2026110781},
-  doi     = {10.20944/preprints202611.0781.v1},
-  url     = {https://doi.org/10.20944/preprints202611.0781.v1}
-}
-```
-
-</details>
 
 Typed decisions from a frozen language model and a small physics engine. You give it a **state** and a
 **question whose answer type is fixed in advance**; it returns a value your code can use directly: a
