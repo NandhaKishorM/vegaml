@@ -61,6 +61,8 @@ desk = Escalator(learner, teacher=vllm_teacher())   # your own model; or claude_
 desk.decide("I was charged twice")["answers"]["team"]["source"]   # "teacher" until vega has learned
 ```
 
+A teacher can be wrong, by accident or on purpose, and vega would copy it. Give the `Escalator` about 200 records a person has answered and it checks the teacher against them as it goes, suspends it on a failed check and forgets what it taught since: `Escalator(learner, teacher, check=records)`. [How it works and what it catches](https://nandhakishorm.github.io/vegaml/learn/#checking-the-teacher).
+
 Code written for vegaml 0.19 keeps working: once vegaml-learn is installed, `from vegaml import Learner`, `from vegaml.learn import Escalator` and `python -m vegaml.learn proxy` all resolve to this package.
 
 Full guide: [nandhakishorm.github.io/vegaml/learn](https://nandhakishorm.github.io/vegaml/learn/), also at [embedding.in/docs/continuous-learning](https://embedding.in/docs/continuous-learning). API reference: [Learner and Escalator](https://nandhakishorm.github.io/vegaml/reference/learner/).

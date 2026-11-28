@@ -104,6 +104,8 @@ known-first-party = ["vegaml", "vegaml_learn"]
 [tool.ruff.lint.per-file-ignores]
 # FastAPI declares dependencies as argument defaults, Depends(...), by design.
 "learn/vegaml_learn/serve.py" = ["B008"]
+# A results-table script, kept as it was run.
+"learn/bench/teacher_check/*.py" = ["E501", "E702", "E731", "E402", "B905"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

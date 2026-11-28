@@ -194,6 +194,69 @@ A served 27B model teaches nearly as well as Claude with nothing leaving your ma
 than vega teaches it to be wrong: the 0.8B model, right 3% of the time on 60 intents, took vega from 35%
 down to 3%, and audits could not catch it because vega agreed with its teacher.
 
+### Checking the teacher
+
+Everything above measures vega against the teacher. Nothing measures the teacher. A teacher that is
+wrong on purpose, or that changed after you approved it, is copied faithfully, and the signals that
+normally reassure you (audit agreement, the falling teacher share) look fine while it happens.
+
+A check set fixes that. It is a few hundred records a person has answered. vega never learns from
+them. The teacher is asked about them like any other record, mixed into the real traffic, and scored.
+
+```python
+check = [("cancel my order", {"team": "orders"}), ...]      # about 200, taken from real traffic
+desk = Escalator(learner, teacher, check=check)
+
+desk.report()["check"]        # {"team": {"records": 200, "asked": 200, "accuracy": 0.91, "first_accuracy": 0.91}}
+desk.alarms, desk.suspended   # what failed, and the questions the teacher is suspended for
+```
+
+The whole set is asked once before the first decision, so a teacher that is wrong from the start
+teaches nothing. After that, one check record follows each teacher call with probability
+`check_rate` (0.25 by default), in a shuffled cycle. The teacher fails the check, per question, when:
+
+| rule | fails when | needs |
+| --- | --- | --- |
+| `option` | for some answer with at least 3 check records, the teacher gives one same other answer on two thirds of them | nothing |
+| `turned` | at least 3 check records of one answer that it got right the first time now get one same other answer | one earlier pass |
+| `changed` | it now gets wrong enough records it used to get right that chance is ruled out (a sign test at 0.01, so 7 with none the other way) | one earlier pass |
+| `floor` | its accuracy on the check set is under `check_floor` | a number from you |
+
+On a failed check the question is suspended: the teacher is no longer asked or learned from for it,
+vega keeps answering what it is sure of, and a record it would have sent to the teacher comes back
+with `needs_person: True`. What the teacher taught since the trouble began is forgotten
+(`learner.forget(records)`, which you can also call yourself); the starting-set rows those answers
+had displaced count again. `desk.resume()` lifts the suspension once someone has looked, and the
+teacher is judged afresh. `on_alarm=function` is called with what failed.
+
+What it costs: one teacher call per check record, so the size of the set once, then `check_rate`
+extra calls per teacher call.
+
+Measured, with a teacher that mislabels on purpose inside this loop (three tasks, three seeds each,
+200 check records, `check_rate=0.25`; [harness and every result](https://github.com/NandhaKishorM/vegaml/tree/main/learn/bench/teacher_check)).
+"Targeted" is the answers the saboteur goes after, scored on held-out records.
+
+| | assistant intents (59 options, Opus teacher) | what is being sold (6 options) |
+| --- | --- | --- |
+| honest teacher, vega right on the targeted answers | 79% | 97% |
+| teacher swaps them, no check set | **0%** (gives the swapped answer 85% of the time) | **0%** (100%) |
+| the same teacher with a check set | stopped before the first decision, 3 of 3 runs | 3 of 3 |
+| teacher turns mid-stream, no check set | 34% | 26% |
+| the same with a check set | caught in 3 of 3, about 250 records later, every bad answer forgotten | 2 of 3 (3 of 3 at `check_rate=0.5`) |
+| honest teacher suspended by mistake | 0 of 13 runs | 0 of 13 |
+
+What it does not catch:
+
+- A teacher that swaps only half of an answer's records from the first day: caught in 2 of 6 runs. Give it
+  `check_floor` (what the teacher scored when you approved it, less three points): 4 of 6.
+- A teacher wrong at random on 5% of records from the first day: only `check_floor` sees it (7 of 9 runs).
+- A teacher that recognises the check records. Take them from real traffic and replace them now and then.
+
+How fast: a teacher that turns teaches about `3 / check_rate` bad answers before the alarm, whatever share
+of the traffic it goes after (measured: 18 at 0.25, 6 at 0.5, 2 at 1.0 on assistant intents), and those are
+then forgotten. An honest teacher that answers at random 3% of the time it is asked was suspended in 1 of
+29 runs.
+
 ## Saved state, more machines
 
 - `workdir` keeps the last three versions and is picked up on the next start, as long as the
@@ -235,7 +298,8 @@ to learn from 300 answers. On a GPU, about 40 ms an answer in 2 GB.
 ## Limits
 
 - The heads are only as good as the answers you confirm. A wrong feed is caught when it disagrees
-  sharply with what was learned, not when it is slightly wrong.
+  sharply with what was learned, not when it is slightly wrong. A teacher that is consistently wrong
+  is not caught at all without a check set ([Checking the teacher](#checking-the-teacher)).
 - A head knows the options it has seen confirmed; an option nobody has confirmed yet is answered by
   vega until it has examples.
 - Heads carry no calibration of their own: `confidence` from a head is its probability, not a

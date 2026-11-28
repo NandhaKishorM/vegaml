@@ -22,11 +22,24 @@ line is the lowest confidence at which vega's answers above it agree with the te
 answers start to agree and the line comes down by itself; if the policy changes, audits catch the
 disagreement and the line goes back up. A head is never trusted on its confidence alone, because a
 head's confidence is its probability, not a calibrated one.
+
+Checking the teacher. All of the above measures vega against the teacher, so a teacher that is wrong
+(a model that was changed, a broken prompt, one that mislabels on purpose) is copied faithfully and
+nothing above notices. Give the Escalator a check set, records a person has answered that vega never
+learns from, and it asks the teacher about them as it goes, mixed into the real traffic:
+
+    desk = Escalator(learner, teacher, check=[("cancel my order", {"team": "orders"}), ...])
+    desk.report()["check"], desk.alarms, desk.suspended
+
+When the teacher fails the check, the question is suspended (the teacher is no longer asked or learned
+from for it, and records vega is unsure of come back marked for a person) and what the teacher taught
+since the trouble began is forgotten (Learner.forget). desk.resume() lifts it once someone has looked.
 """
 
 import base64
 import collections
 import json
+import math
 import random
 import threading
 
@@ -50,6 +63,15 @@ class Escalator:
         on_engine=("abstain", "unbound"),
         accept_held=True,
         seed=0,
+        check=None,
+        check_rate=0.25,
+        check_first=True,
+        check_floor=None,
+        check_min=3,
+        check_share=2 / 3,
+        check_p=0.01,
+        rollback=True,
+        on_alarm=None,
     ):
         """learner: a vegaml_learn.Learner. teacher: function(text, {question id: question}) returning
         {question id: answer}, each answer written as you would write feedback (an option name, true/false,
@@ -77,7 +99,31 @@ class Escalator:
         on_engine: the engine flags that send an answer to the teacher.
         accept_held: the learner holds a batch that sharply disagrees with what it learned (a broken feed,
             or a real change of policy) for someone to decide. With a teacher, the teacher is that someone,
-            so held batches are learned (and counted in the report); False leaves them for a person."""
+            so held batches are learned (and counted in the report); False leaves them for a person.
+        check: a frozen check set, [(record, {question id: answer})], answered by a person. vega never
+            learns from it. The teacher is asked about these records like any other and scored on them;
+            it cannot tell them from traffic unless the records themselves give it away, so take them
+            from real traffic.
+        check_first: ask the teacher the whole check set before the first decision (run_check()), so a teacher
+            that is wrong from the start is stopped before anything is learned from it.
+        check_rate: afterwards, the share of teacher calls that are followed by one check record, in a
+            shuffled cycle. One pass of the set costs that many extra teacher calls.
+        The teacher fails the check, per question, when one of these holds over its latest answer to each
+        check record:
+          "option"   for some answer a person gave to at least `check_min` check records, the teacher
+                     gives one same other answer on at least `check_share` of them (it swaps the two);
+          "turned"   for some answer, at least `check_min` check records the teacher got right the first
+                     time now get one same other answer, and they are at least `check_share` of that
+                     answer's records asked since the first of them (it has begun to swap the two);
+          "changed"  it now gets wrong enough records it got right the first time, against the ones that
+                     went the other way, that chance is ruled out (a sign test below `check_p`): its
+                     behaviour changed in some less tidy way;
+          "floor"    its accuracy on the check set is below `check_floor` (a number, or {question id:
+                     number}; None: no such rule). Use what the teacher scored when you approved it.
+        rollback: on a failed check, forget what the teacher taught for that question since the trouble
+            began: everything when it was wrong from its first check, otherwise everything since it last
+            answered the affected options correctly (and a margin before the first failure).
+        on_alarm: function(alarm) called with what failed."""
         self.learner, self.teacher = learner, teacher
         self.window, self.min_checked, self.max_line = int(window), int(min_checked), float(max_line)
         # earned trust starts at the top: nothing skips the teacher before it has been measured; "calibrated"
@@ -104,6 +150,26 @@ class Escalator:
         self.engine_checked = {q: collections.deque(maxlen=self.window) for q in learner.questions}
         self.agree = {q: collections.deque(maxlen=self.window) for q in learner.questions}  # audits only
         self._rng = random.Random(seed)
+        self._check_rng = random.Random(seed + 1)  # its own stream: adding a check set changes no audit
+        self.check_rate, self.check_first = float(check_rate), bool(check_first)
+        self.check_min, self.check_share, self.check_p = int(check_min), float(check_share), float(check_p)
+        self.check_floor = check_floor
+        self.rollback, self.on_alarm = bool(rollback), on_alarm
+        self._check = []
+        for rec, answers in check or []:
+            labels = {}
+            for q, v in answers.items():
+                if q not in learner.questions:
+                    raise KeyError("the check set names a question the learner does not have: %r" % (q,))
+                labels[q] = label_of(learner.questions[q], v)
+            if labels:
+                self._check.append((rec, labels))
+        self._order, self._audited = [], False
+        self._first, self._last = {}, {}  # (check record, question) -> right the first time; latest answer
+        self._right_at = {}  # ... -> how much the teacher had taught when it last got this record right
+        self._taught = {q: [] for q in learner.questions}  # what the teacher taught, in order
+        #: failed checks, oldest first, and the questions the teacher is suspended for
+        self.alarms, self.suspended = [], {}
         self._lock = threading.Lock()
         self._recent = collections.deque(maxlen=100)
         self.counts = collections.Counter()
@@ -130,6 +196,8 @@ class Escalator:
         learns and is measured. An answer vega would have kept is marked "escalated": "shadow", and its
         agreement with the teacher is counted like an audit's, so the report shows how often vega would
         have been right before anyone lets it answer alone."""
+        if self._check and self.check_first and not self._audited:
+            self.run_check()
         rec = None
         if not isinstance(text, str):  # a picture, a recording, a clip, a conversation: read once
             rec = text if isinstance(text, Record) else self.learner.record(text)
@@ -146,6 +214,8 @@ class Escalator:
                 why = "audit"
             if why:
                 ask[q] = why
+        # a teacher that failed its check is neither asked nor learned from: the record goes to a person
+        parked = {q: ask.pop(q) for q in list(ask) if q in self.suspended}
         got = {}
         if ask:
             try:
@@ -177,8 +247,14 @@ class Escalator:
             a["answer"] = _written(self.learner.questions[q], lab)
             a["source"] = "teacher"
             learn[q] = lab
+        for q, why in parked.items():
+            answers[q]["escalated"], answers[q]["teacher"] = why, "suspended"
+            if why not in ("audit", "shadow"):
+                out["needs_person"] = True
         if learn:
             self.learner.feedback(text, learn)
+            for q in learn:
+                self._taught[q].append(text)
             if (
                 getattr(self.learner, "_thread", None) is None
                 and self.learner.pending() >= self.learner.every
@@ -194,8 +270,192 @@ class Escalator:
             for why in ask.values():
                 self.counts["escalated_" + why.replace(" ", "_")] += 1
             # the share that needs the teacher: in shadow, the records vega would not have kept alone
-            self._recent.append(any(w != "shadow" for w in ask.values()))
+            self.counts["suspended"] += bool(parked)
+            self._recent.append(any(w != "shadow" for w in list(ask.values()) + list(parked.values())))
         out["teacher_called"] = bool(ask)
+        if ask and self._check and self._check_rng.random() < self.check_rate:
+            self._probe()
+        return out
+
+    # ------------------------------------------------------------------ checking the teacher
+    def run_check(self):
+        """Ask the teacher the whole check set once and judge it. Runs by itself before the first decision
+        (check_first); call it any time for a fresh pass. Returns {"asked", "accuracy", "alarms"}."""
+        self._audited = True
+        before = len(self.alarms)
+        asked = sum(self._probe(i, judge=False) for i in range(len(self._check)))
+        for q in list(self.learner.questions):
+            self._judge(q)
+        return {"asked": asked, "accuracy": self._check_accuracy(), "alarms": list(self.alarms[before:])}
+
+    def resume(self, question=None):
+        """A person has looked at the alarm: ask the teacher again for this question (default: every
+        suspended one). What the check remembers of it is cleared, so the teacher is judged afresh,
+        starting with a full pass when check_first is on."""
+        with self._lock:
+            qs = list(self.suspended) if question is None else [question]
+            for q in qs:
+                self.suspended.pop(q, None)
+                for k in [k for k in self._first if k[1] == q]:
+                    self._first.pop(k), self._last.pop(k, None), self._right_at.pop(k, None)
+            self._audited = False
+        return qs
+
+    def _probe(self, i=None, judge=True):
+        """One check record to the teacher, scored against the person's answer. Never learned from."""
+        if i is None:
+            if not self._order:
+                self._order = list(range(len(self._check)))
+                self._check_rng.shuffle(self._order)
+            i = self._order.pop()
+        rec, human = self._check[i]
+        qs = {q: self.learner.questions[q] for q in human if q not in self.suspended}
+        if not qs:
+            return 0
+        try:
+            got = self.teacher(rec, qs) or {}
+        except Exception as e:
+            self.counts["teacher_errors"] += 1
+            self.last_error = repr(e)
+            return 0
+        seen = []
+        with self._lock:
+            self.counts["checks"] += 1
+            for q in qs:
+                if got.get(q) is None:
+                    continue
+                try:
+                    lab = label_of(self.learner.questions[q], got[q])
+                except (ValueError, TypeError):
+                    self.counts["teacher_unusable"] += 1
+                    continue
+                ok = lab == human[q]
+                self._first.setdefault((i, q), ok)
+                self._last[(i, q)] = (lab, ok, len(self._taught[q]))
+                if ok:
+                    self._right_at[(i, q)] = len(self._taught[q])
+                seen.append(q)
+        if judge:
+            for q in seen:
+                self._judge(q)
+        return 1
+
+    def _judge(self, q):
+        """Apply the four rules to the teacher's latest answer to each check record of one question."""
+        if q in self.suspended:
+            return None
+        rows = []
+        for i in range(len(self._check)):
+            if (i, q) in self._last:
+                lab, ok, at = self._last[(i, q)]
+                rows.append(
+                    {
+                        "human": self._check[i][1][q],
+                        "first": self._first[(i, q)],
+                        "says": lab,
+                        "ok": ok,
+                        "at": at,
+                        "right_at": self._right_at.get((i, q)),
+                    }
+                )
+        if not rows:
+            return None
+        by = collections.defaultdict(list)
+        for r in rows:
+            by[r["human"]].append(r)
+        for g, v in by.items():
+            wrong = collections.Counter(r["says"] for r in v if not r["ok"])
+            if len(v) < self.check_min or not wrong:
+                continue
+            w, c = wrong.most_common(1)[0]
+            if c >= self.check_share * len(v):
+                detail = {"option": g, "teacher_says": w, "records": len(v), "wrong": c}
+                return self._alarm(q, "option", detail, rows, [r for r in v if r["says"] == w])
+        for g, v in by.items():
+            turned = [r for r in v if r["first"] and not r["ok"]]
+            if len(turned) < self.check_min:
+                continue
+            w, c = collections.Counter(r["says"] for r in turned).most_common(1)[0]
+            same = [r for r in turned if r["says"] == w]
+            since = [r for r in v if r["at"] >= min(r["at"] for r in same)]
+            if c >= self.check_min and c >= self.check_share * len(since):
+                detail = {"option": g, "teacher_says": w, "records": len(since), "wrong": c}
+                return self._alarm(q, "turned", detail, rows, same)
+        acc = sum(r["ok"] for r in rows) / len(rows)
+        floor = self.check_floor.get(q) if isinstance(self.check_floor, dict) else self.check_floor
+        total = sum(1 for _, human in self._check if q in human)
+        if floor is not None and len(rows) >= min(total, 30) and acc < float(floor):
+            detail = {"accuracy": acc, "floor": float(floor), "records": len(rows)}
+            return self._alarm(q, "floor", detail, rows, [r for r in rows if not r["ok"]])
+        lost = [r for r in rows if r["first"] and not r["ok"]]
+        gained = sum(1 for r in rows if r["ok"] and not r["first"])
+        if lost and _sign_p(len(lost), len(lost) + gained) < self.check_p:
+            detail = {"now_wrong": len(lost), "now_right": gained, "accuracy": acc}
+            return self._alarm(q, "changed", detail, rows, lost)
+        return None
+
+    def _since(self, q, rows, failing, swap):
+        """How many of the teacher's answers to keep: the ones taught before the trouble began.
+
+        A failing check record the teacher already got wrong the first time says the trouble was there
+        from the start: keep nothing. Otherwise the trouble began before the first failing check, and
+        there are two estimates of how long before. When the teacher swaps one answer for another every
+        time (`swap`: the "option" and "turned" rules), it began after the teacher last got that answer
+        right, which is exact. When it is wrong only now and then, a correct answer proves nothing, so the
+        estimate is three typical gaps between failures before the first one, and the earlier of the two
+        is used."""
+        if any(not r["first"] for r in failing):
+            return 0
+        taught = len(self._taught[q])
+        changed = failing if swap else ([r for r in rows if r["first"] and not r["ok"]] or failing)
+        first = min(r["at"] for r in changed)
+        options = {r["human"] for r in changed}
+        good = [
+            r["right_at"]
+            for r in rows
+            if r["human"] in options and r["right_at"] is not None and r["right_at"] < first
+        ]
+        if swap and good:
+            return max(good)
+        gap = (taught - first) / max(1, len(changed) - 1)
+        since = first - 3 * gap
+        if good:
+            since = min(since, max(good))
+        return max(0, int(since))
+
+    def _alarm(self, q, rule, detail, rows, failing):
+        """Suspend the teacher for one question and forget what it taught since the trouble began."""
+        taught = self._taught[q]
+        since = self._since(q, rows, failing, rule in ("option", "turned"))
+        alarm = {"question": q, "rule": rule, **detail}
+        alarm["decisions"], alarm["checks"] = self.counts["decisions"], self.counts["checks"]
+        alarm["taught"], alarm["kept"], alarm["forgotten"] = len(taught), since, 0
+        if self.rollback and taught[since:]:
+            alarm["forgotten"] = self.learner.forget(taught[since:], [q])["rows"]
+            del taught[since:]
+        with self._lock:
+            self.suspended[q] = alarm
+            self.alarms.append(alarm)
+            self.counts["alarms"] += 1
+        if self.on_alarm is not None:
+            try:
+                self.on_alarm(alarm)
+            except Exception as e:  # a failing hook must not take answering down
+                self.last_error = repr(e)
+        return alarm
+
+    def _check_accuracy(self):
+        out = {}
+        for q in self.learner.questions:
+            now = [v[1] for (i, k), v in self._last.items() if k == q]
+            first = [v for (i, k), v in self._first.items() if k == q]
+            if now:
+                out[q] = {
+                    "records": sum(1 for _, human in self._check if q in human),
+                    "asked": len(now),
+                    "accuracy": sum(now) / len(now),
+                    "first_accuracy": sum(first) / len(first),
+                }
         return out
 
     def _checked(self, q, conf, agreed, readout="head"):
@@ -250,6 +510,15 @@ class Escalator:
                 "agree": {q: list(d) for q, d in self.agree.items()},
                 "counts": dict(self.counts),
                 "recent": list(self._recent),
+                "check": {
+                    "audited": self._audited,
+                    "first": [[i, q, ok] for (i, q), ok in self._first.items()],
+                    "last": [[i, q, *v] for (i, q), v in self._last.items()],
+                    "right_at": [[i, q, at] for (i, q), at in self._right_at.items()],
+                    "taught": {q: [t for t in v if isinstance(t, str)] for q, v in self._taught.items()},
+                    "alarms": list(self.alarms),
+                    "suspended": dict(self.suspended),
+                },
             }
 
     def load_state(self, state):
@@ -269,6 +538,23 @@ class Escalator:
                 self.agree[q].extend(bool(x) for x in state.get("agree", {}).get(q, []))
             self.counts.update({k: int(v) for k, v in state.get("counts", {}).items()})
             self._recent.extend(bool(x) for x in state.get("recent", []))
+            ck = state.get("check") or {}
+            n = len(self._check)
+            self._audited = bool(ck.get("audited", self._audited))
+            for i, q, ok in ck.get("first", []):
+                if int(i) < n and q in self.line:
+                    self._first[(int(i), q)] = bool(ok)
+            for i, q, lab, ok, pos in ck.get("last", []):
+                if int(i) < n and q in self.line:
+                    self._last[(int(i), q)] = (lab, bool(ok), int(pos))
+            for i, q, at in ck.get("right_at", []):
+                if int(i) < n and q in self.line:
+                    self._right_at[(int(i), q)] = int(at)
+            for q, v in (ck.get("taught") or {}).items():
+                if q in self._taught:
+                    self._taught[q] = list(v)
+            self.alarms = list(ck.get("alarms", self.alarms))
+            self.suspended = {q: a for q, a in (ck.get("suspended") or {}).items() if q in self.line}
 
     def report(self):
         """How much the teacher is still needed: overall, over the last 100 records, and per question the
@@ -291,7 +577,16 @@ class Escalator:
             "audit_agreement": {q: (sum(d) / len(d) if d else None) for q, d in self.agree.items()},
             "audits": {q: len(d) for q, d in self.agree.items()},
             "checked": {q: len(d) for q, d in self.checked.items()},
+            "check": self._check_accuracy(),
+            "checks": c.get("checks", 0),
+            "alarms": list(self.alarms),
+            "suspended": sorted(self.suspended),
         }
+
+
+def _sign_p(k, n):
+    """The chance of k or more heads in n fair coin flips."""
+    return sum(math.comb(n, j) for j in range(k, n + 1)) / 2**n
 
 
 def _trust_value(v):

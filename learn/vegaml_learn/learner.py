@@ -934,6 +934,60 @@ class Learner:
         self.on_event({"kind": "undone", "back_to": u["version"], "version": v})
         return v
 
+    def forget(self, records, questions=None):
+        """Unlearn answers that turned out to be untrustworthy: every answer learned for these records (a
+        text, or what record() takes) is taken out and the heads are refitted without them. Starting-set
+        rows are never touched, and the ones the dropped answers had displaced count again. Answers still
+        waiting to be learned and held batches for the same questions go too, since they came from the
+        same source. `questions`: only these question ids (default: all). Returns {"rows", "version"}."""
+        if self.follow:
+            raise RuntimeError("this learner follows another one's saved state and does not learn")
+        qids = list(self.questions) if questions is None else list(questions)
+        unknown = [q for q in qids if q not in self.questions]
+        if unknown:
+            raise KeyError("not one of this learner's questions: %r" % (unknown,))
+        items = [r if (isinstance(r, str) and self.modality == "text") else self._item(r) for r in records]
+        keys = {_key(x) for x in items}
+        with self._inbox:
+            kept = []
+            for t, lab in self._buffer:
+                if _key(t) in keys:
+                    lab = {q: v for q, v in lab.items() if q not in qids}
+                if lab:
+                    kept.append((t, lab))
+            self._buffer = kept
+        with self._lock:
+            store, dropped, touched = self.store.copy(), 0, []
+            for q in qids:
+                keep = [
+                    i
+                    for i, (src, k) in enumerate(zip(store.src[q], store.k[q], strict=True))
+                    if src == "start" or k not in keys
+                ]
+                self._held.pop(q, None)
+                if len(keep) == len(store.src[q]):
+                    continue
+                dropped += len(store.src[q]) - len(keep)
+                store.X[q] = store.X[q][keep]
+                store.y[q] = [store.y[q][i] for i in keep]
+                store.e[q] = [store.e[q][i] for i in keep]
+                store.src[q] = [store.src[q][i] for i in keep]
+                store.k[q] = [store.k[q][i] for i in keep]
+                touched.append(q)
+            if touched:
+                heads = dict(self.heads)
+                heads.update(self._fit(store, touched))
+                self._undo = None  # one step back would bring the dropped answers back
+                self.store, self.heads = store, heads
+                for q in touched:
+                    self.expected.pop(q, None)
+                self.version += 1
+                self._save()
+            version = self.version
+        out = {"kind": "forgot", "rows": dropped, "questions": touched, "version": version}
+        self.on_event(out)
+        return {"rows": dropped, "version": version}
+
     # ------------------------------------------------------------------ files
     def _save(self):
         """The current state under workdir/v<version>/. The last `keep` versions are kept."""
