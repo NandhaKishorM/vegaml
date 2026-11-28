@@ -374,3 +374,119 @@ def test_an_unflagged_confident_engine_is_checked_before_it_is_trusted():
     assert desk.engine_line["team"] == desk.max_line  # its confident answers disagreed: still checked
     old = Escalator(Learner(Q, [], reader=ConfidentReader(), auto=False), Teacher(), audit=0.0, engine_line=0)
     assert old.decide(stream(1, 9)[0][0])["answers"]["team"]["source"] == "vega"
+
+
+# ---------------------------------------------------------------------- checking the teacher
+class Saboteur:
+    """Right about everything except one team, which it answers with another: from the start, or only
+    after `after` calls."""
+
+    def __init__(self, after=0, swap=("sales", "billing")):
+        self.calls, self.after, self.swap = 0, after, swap
+
+    def __call__(self, text, questions):
+        self.calls += 1
+        t = truth(text)
+        if self.calls > self.after and t == self.swap[0]:
+            t = self.swap[1]
+        return {q: t for q in questions}
+
+
+def check_set(n=60, seed=99):
+    return [(text, {"team": team}) for text, team in stream(n, seed)]
+
+
+def sales_right(learner, seed=7):
+    rows = [(t, team) for t, team in stream(300, seed) if team == "sales"]
+    return sum(learner.decide(t)["answers"]["team"]["answer"] == "sales" for t, _ in rows) / len(rows)
+
+
+def test_forget_takes_learned_answers_out_and_keeps_the_starting_set():
+    start = [(t, {"team": team}) for t, team in stream(60, 3)]
+    learner = Learner(Q, examples=start, reader=FlaggingReader(), auto=False, every=20)
+    wrong = [(t, {"team": "billing"}) for t, team in stream(200, 4) if team == "sales"][:40]
+    for t, a in wrong:
+        learner.feedback(t, a)
+    learner.flush()
+    assert sales_right(learner) < 0.5  # it learned the wrong answers
+    out = learner.forget([t for t, _ in wrong])
+    assert out["rows"] == 40 and learner.store.counts("team") == {"starting_set": 60, "yours": 0}
+    assert sales_right(learner) > 0.9
+
+
+def test_without_a_check_set_a_sabotaging_teacher_is_learned_and_nothing_fires():
+    learner, d = desk(teacher=Saboteur())
+    for text, _ in stream(400, 2):
+        d.decide(text)
+    assert sales_right(learner) < 0.2 and not d.alarms and not d.suspended
+
+
+def test_a_teacher_wrong_from_the_start_is_stopped_before_it_teaches_anything():
+    seen = []
+    learner, d = desk(teacher=Saboteur(), check=check_set(), on_alarm=seen.append)
+    out = d.decide(stream(1, 2)[0][0])
+    alarm = d.alarms[0]
+    assert alarm["rule"] == "option" and alarm["option"] == "sales" and alarm["teacher_says"] == "billing"
+    assert seen == [alarm] and d.suspended == {"team": alarm}
+    a = out["answers"]["team"]
+    assert a["source"] == "vega" and a["teacher"] == "suspended" and out["needs_person"]
+    assert not out["teacher_called"] and learner.store.counts("team")["yours"] == 0
+    calls = d.teacher.calls
+    for text, _ in stream(50, 5):
+        d.decide(text)
+    assert d.teacher.calls == calls  # a suspended teacher is not asked again
+    assert d.report()["suspended"] == ["team"] and d.report()["check"]["team"]["accuracy"] < 0.8
+
+
+def test_an_honest_teacher_passes_the_check_and_is_never_suspended():
+    learner, d = desk(check=check_set(), check_rate=0.5)
+    for text, _ in stream(400, 2):
+        d.decide(text)
+    r = d.report()
+    assert not d.alarms and r["check"]["team"]["accuracy"] == 1.0 and r["checks"] > 60
+    assert learner.store.counts("team")["yours"] > 0
+
+
+def test_a_teacher_that_turns_is_caught_and_what_it_taught_since_is_forgotten():
+    # honest for the 60 check records and the first 150 answers, then it swaps sales for billing
+    learner, d = desk(teacher=Saboteur(after=210), check=check_set(), check_rate=0.5, audit=0.3)
+    for text, _ in stream(900, 2):
+        d.decide(text)
+    alarm = d.alarms[0]
+    assert alarm["rule"] == "turned" and alarm["option"] == "sales" and alarm["teacher_says"] == "billing"
+    assert alarm["forgotten"] > 0 and "team" in d.suspended
+    assert alarm["decisions"] < 500  # three turned check records are enough, well before the stream ends
+    assert sales_right(learner) > 0.9  # the swap it had begun to learn is gone
+
+
+def test_a_floor_stops_a_teacher_that_is_wrong_at_random():
+    class Noisy(Teacher):
+        def __call__(self, text, questions):
+            out = super().__call__(text, questions)
+            if int(hashlib.sha1(text.encode()).hexdigest()[:4], 16) % 5 == 0:
+                out = {q: "technical" if v != "technical" else "sales" for q, v in out.items()}
+            return out
+
+    _, d = desk(teacher=Noisy(), check=check_set(120), check_floor=0.9)
+    d.decide(stream(1, 2)[0][0])
+    assert d.alarms and d.alarms[0]["rule"] == "floor"
+
+
+def test_resume_asks_the_teacher_again_and_check_state_survives_a_restart():
+    learner, d = desk(teacher=Saboteur(), check=check_set())
+    d.decide(stream(1, 2)[0][0])
+    state = json.loads(json.dumps(d.state()))
+    d2 = Escalator(learner, Teacher(), check=check_set())
+    d2.load_state(state)
+    assert d2.suspended and d2.alarms and d2.teacher.calls == 0
+    assert d2.decide(stream(1, 6)[0][0])["answers"]["team"]["source"] == "vega"
+    assert d2.resume() == ["team"] and not d2.suspended
+    out = d2.decide(stream(1, 8)[0][0])  # the honest teacher passes a fresh pass and answers again
+    assert not d2.suspended and out["answers"]["team"]["source"] == "teacher"
+
+
+def test_a_check_set_naming_an_unknown_question_is_refused():
+    import pytest
+
+    with pytest.raises(KeyError):
+        desk(check=[("refund please", {"nope": "billing"})])
