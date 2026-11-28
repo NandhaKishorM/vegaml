@@ -36,6 +36,10 @@ between requests. Nothing waits for it.
 
 ## How it learns
 
+The design as a whole has a name, **Sthiti** (Sanskrit for the state something comes to rest in): a frozen
+language model reads, its states are projected into vega's physics engine, where the answer is the well a
+particle settles in, and small heads on the same frozen features learn from confirmed answers.
+
 - Every question gets a small head: a classifier over vega's frozen features. vega itself never
   changes, so learning is a few seconds of numpy, not a fine-tune.
 - A head answers only when its cross-validated accuracy, and its balanced accuracy (mean recall per
