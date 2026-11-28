@@ -16,11 +16,14 @@ Calibrated probabilities, an honest "I should not decide", 73k tokens of context
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
-  <a href="https://github.com/NandhaKishorM/vegaml/blob/main/docs/index.md">Docs</a> ·
+  <a href="https://nandhakishorm.github.io/vegaml/">Docs</a> ·
   <a href="#benchmarks-at-a-glance">Benchmarks</a> ·
   <a href="https://platform.embedding.in">Hosted proxy</a> ·
-  <a href="https://embedding.in/licence">Commercial licence</a>
+  <a href="https://embedding.in/licence">Commercial licence</a> ·
+  <a href="#where-this-is-going">Vision</a>
 </p>
+
+<p align="center"><b>Documentation: <a href="https://nandhakishorm.github.io/vegaml/">nandhakishorm.github.io/vegaml</a></b></p>
 
 > **Cite this work.** M, N.; M, A. From Laya to Vega: Open Non-Autoregressive Decision Models with Calibrated Probabilities. *Preprints* **2026**, 2026110781. [https://doi.org/10.20944/preprints202611.0781.v1](https://doi.org/10.20944/preprints202611.0781.v1)
 
@@ -574,7 +577,7 @@ Each question gets a small head over vega's frozen features, refitted as confirm
 head answers only when it beats vega's own answer on the same rows; a batch that sharply disagrees
 with what was learned is held for you to accept or discard; one step can be undone; state is saved
 and resumed. `python -m vegaml_learn serve` runs it as a REST API with JWT (`pip install
-"vegaml-learn[serve]"`). Full guide: [docs/learn.md](docs/learn.md).
+"vegaml-learn[serve]"`). Full guide: [Continuous learning](https://nandhakishorm.github.io/vegaml/learn/), also at [embedding.in/docs/continuous-learning](https://embedding.in/docs/continuous-learning).
 
 With no one confirming answers, give it a teacher. Only what vega is unsure of goes to the teacher, its
 answer is served and learned from, and a 5% audit keeps a confident head honest:
@@ -657,7 +660,7 @@ vegaml.load("owner/private-repo", token=tok)    # or pass it explicitly
 
 ## Beyond the Python API
 
-Each surface is one extra; none changes the core, and [docs/](docs/index.md) covers them all.
+Each surface is one extra; none changes the core, and the [documentation site](https://nandhakishorm.github.io/vegaml/) covers them all, with a generated [API reference](https://nandhakishorm.github.io/vegaml/reference/).
 
 | Surface | Install | One line |
 | --- | --- | --- |
@@ -671,6 +674,22 @@ Each surface is one extra; none changes the core, and [docs/](docs/index.md) cov
 | [Docker](docs/docker.md) | repo | `docker compose up`: the HTTP server as a container |
 
 Runnable starts for each live in [examples/](examples/).
+
+## Where this is going
+
+vegaml is built by [Embedding Space](https://embedding.in), a foundational AI lab. The aim is AI that knows when it does not know, keeps learning from the people it works for, and makes decisions that are good for them.
+
+| | Step | Status |
+| --- | --- | --- |
+| 1 | [laya](https://github.com/NandhaKishorM/laya), the System 1 decision model: one pass, no text generated | Shipped |
+| 2 | vega, a decision engine built on physics ([how it works](#how-it-works)) | Shipped |
+| 3 | Continuous learning from a person or an LLM teacher ([vegaml-learn](#continuous-learning)) | Shipped |
+| 4 | Direct weight-space editing: a decision policy written straight into a model's weights, with no training run ([what we measured](https://embedding.in/blog/a-decision-skill-written-into-the-weights)) | In use |
+| 5 | Abstain and unbound for every LLM, so a chatbot or an agent can stop and hand over instead of guessing | Research |
+| 6 | Systems that improve themselves from their own checked answers, under human control | Research, early; no claim yet |
+| 7 | Abstract reasoning beyond the transformer, with models built on energy and physics | Research |
+
+The full statement: [embedding.in/vision](https://embedding.in/vision), and [the same path in the docs](https://nandhakishorm.github.io/vegaml/vision/).
 
 ## The earlier checkpoints
 

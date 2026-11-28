@@ -7,7 +7,7 @@ are identical behind every reader (the publish step asserts the checksum); only 
 the per-reader calibration differ. The reader is never fine-tuned, and the engine is never
 retrained to add one.
 
-![vega-U benchmarks](../assets/vega_u_benchmarks.png)
+![vega-U benchmarks](https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega_u_benchmarks.png)
 
 ## Loading
 
@@ -118,7 +118,7 @@ four readers (Bitext intents 0.99, Enron-Spam 0.99, phishing 0.99, AG News 0.92 
 and the ordinal `score` question type sits near 0.61 for every reader: that ceiling belongs
 to the engine or the labels, not the reader.
 
-![the full benchmark board](../assets/vega_u_full_board.png)
+![the full benchmark board](https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega_u_full_board.png)
 
 Caveats that belong next to the numbers: the 27B's held-out split is capped at 400 records
 per source (n=21,008) while the smaller readers are scored on the full split (n=50,676), and
