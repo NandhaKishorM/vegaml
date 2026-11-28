@@ -71,6 +71,7 @@ vegaml-calibrate = "vegaml.recalibrate:main"
 
 [project.urls]
 Homepage = "https://embedding.in"
+Documentation = "https://nandhakishorm.github.io/vegaml/"
 Repository = "https://github.com/NandhaKishorM/vegaml"
 "Embedding Studio" = "https://studio.embedding.in"
 Issues = "https://github.com/NandhaKishorM/vegaml/issues"

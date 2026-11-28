@@ -40,6 +40,7 @@ vegaml-learn = "vegaml_learn.serve:main"
 
 [project.urls]
 Homepage = "https://embedding.in"
+Documentation = "https://nandhakishorm.github.io/vegaml/"
 "Commercial licence" = "https://embedding.in/licence"
 Repository = "https://github.com/NandhaKishorM/vegaml/tree/main/learn"
 Issues = "https://github.com/NandhaKishorM/vegaml/issues"

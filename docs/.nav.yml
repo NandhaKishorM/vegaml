@@ -1,0 +1,32 @@
+# Site navigation order. A page that is not listed appears under Guides, so a new guide shows up
+# without an edit here; add it where it belongs once its place is clear.
+nav:
+  - index.md
+  - quickstart.md
+  - how-it-works.md
+  - Guides:
+      - questions.md
+      - vega-u.md
+      - structured.md
+      - guard.md
+      - router.md
+      - policies.md
+      - calibration.md
+      - escalation.md
+      - evals.md
+      - langchain.md
+      - glob: "*"
+        ignore_no_matches: true
+  - Continuous learning:
+      - learn.md
+      - licensing.md
+  - Serving:
+      - cli.md
+      - http-api.md
+      - mcp.md
+      - docker.md
+      - cpu.md
+      - onnx.md
+      - mlx.md
+  - reference
+  - vision.md

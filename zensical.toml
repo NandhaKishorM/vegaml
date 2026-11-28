@@ -1,0 +1,55 @@
+# Documentation site, built with Zensical (https://zensical.org). Preview locally:
+#   pip install -r requirements-docs.txt && zensical serve
+
+[project]
+site_name = "vegaml"
+site_description = "Typed decisions from a frozen language model and a small physics engine"
+site_url = "https://nandhakishorm.github.io/vegaml/"
+repo_url = "https://github.com/NandhaKishorM/vegaml"
+repo_name = "NandhaKishorM/vegaml"
+edit_uri = "edit/main/docs/"
+copyright = "vegaml: Apache 2.0. vegaml-learn: PolyForm Noncommercial 1.0.0. Embedding Space."
+# The navigation order lives in docs/.nav.yml, read by the awesome-nav plugin below. A page it
+# does not list still appears, so a new page needs no edit here.
+
+[project.theme]
+# Reuse the README icon to avoid maintaining a second copy.
+logo = "https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega-icon.svg"
+favicon = "https://raw.githubusercontent.com/NandhaKishorM/vegaml/main/assets/vega-icon.svg"
+features = [
+  "content.code.copy",
+  "navigation.footer",
+  "navigation.indexes",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.plugins.awesome-nav]
+
+# API reference pages under docs/reference/ are generated from the docstrings in vegaml/ and
+# learn/vegaml_learn/.
+[project.plugins.mkdocstrings.handlers.python]
+paths = [".", "learn"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "google"
+docstring_section_style = "list"
+filters = ["!^_"]
+members_order = "source"
+merge_init_into_class = true
+line_length = 70
+separate_signature = true
+show_root_full_path = false
+show_root_heading = true
+show_signature_annotations = true
+show_source = false

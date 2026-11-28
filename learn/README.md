@@ -63,4 +63,4 @@ desk.decide("I was charged twice")["answers"]["team"]["source"]   # "teacher" un
 
 Code written for vegaml 0.19 keeps working: once vegaml-learn is installed, `from vegaml import Learner`, `from vegaml.learn import Escalator` and `python -m vegaml.learn proxy` all resolve to this package.
 
-Full guide: [docs/learn.md](https://github.com/NandhaKishorM/vegaml/blob/main/docs/learn.md).
+Full guide: [nandhakishorm.github.io/vegaml/learn](https://nandhakishorm.github.io/vegaml/learn/), also at [embedding.in/docs/continuous-learning](https://embedding.in/docs/continuous-learning). API reference: [Learner and Escalator](https://nandhakishorm.github.io/vegaml/reference/learner/).

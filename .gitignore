@@ -12,3 +12,4 @@ dist/
 *.pt
 models/
 .venv-test/
+site/
